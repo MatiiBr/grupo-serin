@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { DestinationsModule } from './destinations/destinations.module';
 import { LoadingPlansModule } from './loading-plans/loading-plans.module';
 import { OperationsModule } from './operations/operations.module';
+import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { TrucksModule } from './trucks/trucks.module';
@@ -16,6 +17,7 @@ import { TrucksModule } from './trucks/trucks.module';
     TrucksModule,
     DestinationsModule,
     ProductsModule,
+    OrdersModule,
     LoadingPlansModule,
   ],
   controllers: [AppController],

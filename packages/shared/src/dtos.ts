@@ -1,5 +1,5 @@
-import type { LoadingMethod, OperationStatus, PlanStatus, ProductFamily } from './enums';
-import type { LoadingAlert, ProductReference, TruckReference, UUID } from './types';
+import type { CreditStatus, CustomerStatus, LoadingMethod, OperationStatus, OrderStatus, PlanStatus, ProductFamily, SellerPriority } from './enums';
+import type { ISODateString, LoadingAlert, ProductReference, TruckReference, UUID } from './types';
 
 export interface CreateLoadingPlanDto {
   truckId: UUID;
@@ -173,4 +173,78 @@ export interface UpdateProductDto {
   heightMm?: number;
   stackable?: boolean;
   rotationAllowed?: boolean;
+}
+
+export interface CustomerDto {
+  id: UUID;
+  code: string;
+  name: string;
+  taxId?: string | null;
+  status: CustomerStatus;
+  notes?: string | null;
+}
+
+export interface CreateCustomerDto {
+  code: string;
+  name: string;
+  taxId?: string;
+  notes?: string;
+}
+
+export interface UpdateCustomerDto extends Partial<CreateCustomerDto> {
+  status?: CustomerStatus;
+}
+
+export interface OrderItemDto {
+  id: UUID;
+  orderId: UUID;
+  productCatalogId?: UUID | null;
+  productCode: string;
+  description?: string | null;
+  quantity: number;
+  weightKg?: number | null;
+  lengthMm?: number | null;
+  widthMm?: number | null;
+  heightMm?: number | null;
+  notes?: string | null;
+}
+
+export interface CreateOrderItemDto {
+  productCatalogId?: UUID;
+  productCode: string;
+  description?: string;
+  quantity?: number;
+  weightKg?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  notes?: string;
+}
+
+export interface OrderDto {
+  id: UUID;
+  code: string;
+  customerId: UUID;
+  status: OrderStatus;
+  creditStatus: CreditStatus;
+  sellerPriority: SellerPriority;
+  destinationCatalogId?: UUID | null;
+  destinationName?: string | null;
+  requestedDeliveryAt?: ISODateString | null;
+  externalRef?: string | null;
+  notes?: string | null;
+  customer?: CustomerDto;
+  items?: OrderItemDto[];
+}
+
+export interface CreateOrderDto {
+  code?: string;
+  customerId: UUID;
+  sellerPriority?: SellerPriority;
+  destinationCatalogId?: UUID;
+  destinationName?: string;
+  requestedDeliveryAt?: ISODateString;
+  externalRef?: string;
+  notes?: string;
+  items: CreateOrderItemDto[];
 }

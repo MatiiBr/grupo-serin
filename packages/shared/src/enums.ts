@@ -59,3 +59,29 @@ export enum AlertType {
   STACKING_RISK = 'STACKING_RISK',
   MANUAL_REVIEW_REQUIRED = 'MANUAL_REVIEW_REQUIRED',
 }
+
+export enum CustomerStatus {
+  ACTIVE = 'ACTIVE',
+  INACTIVE = 'INACTIVE',
+}
+
+export enum OrderStatus {
+  DRAFT = 'DRAFT',
+  RECEIVED = 'RECEIVED',
+  CREDIT_HELD = 'CREDIT_HELD',
+  RELEASED = 'RELEASED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum CreditStatus {
+  PENDING = 'PENDING',
+  HELD = 'HELD',
+  RELEASED = 'RELEASED',
+}
+
+export enum SellerPriority {
+  LOW = 'LOW',
+  NORMAL = 'NORMAL',
+  HIGH = 'HIGH',
+  URGENT = 'URGENT',
+}

@@ -69,6 +69,95 @@ enum AlertType {
   MANUAL_REVIEW_REQUIRED
 }
 
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum OrderStatus {
+  DRAFT
+  RECEIVED
+  CREDIT_HELD
+  RELEASED
+  CANCELLED
+}
+
+enum CreditStatus {
+  PENDING
+  HELD
+  RELEASED
+}
+
+enum SellerPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model Customer {
+  id        String         @id @default(uuid())
+  code      String         @unique
+  name      String
+  taxId     String?
+  status    CustomerStatus @default(ACTIVE)
+  notes     String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  orders Order[]
+
+  @@index([name])
+  @@index([status])
+}
+
+model Order {
+  id                  String         @id @default(uuid())
+  code                String         @unique
+  customerId          String
+  status              OrderStatus    @default(RECEIVED)
+  creditStatus        CreditStatus   @default(PENDING)
+  sellerPriority      SellerPriority @default(NORMAL)
+  destinationCatalogId String?
+  destinationName     String?
+  requestedDeliveryAt DateTime?
+  externalRef         String?
+  notes               String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  customer Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items    OrderItem[]
+
+  @@index([customerId])
+  @@index([status, creditStatus])
+  @@index([sellerPriority])
+  @@index([requestedDeliveryAt])
+}
+
+model OrderItem {
+  id               String   @id @default(uuid())
+  orderId          String
+  productCatalogId String?
+  productCode      String
+  description      String?
+  quantity         Int      @default(1)
+  weightKg         Decimal? @db.Decimal(12, 3)
+  lengthMm         Int?
+  widthMm          Int?
+  heightMm         Int?
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productCatalog ProductCatalog? @relation(fields: [productCatalogId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([productCatalogId])
+  @@index([productCode])
+}
+
 model LoadOperation {
   id          String          @id @default(uuid())
   code        String          @unique
@@ -107,6 +196,7 @@ model ProductCatalog {
   updatedAt       DateTime      @updatedAt
 
   operationAssignments OperationProductAssignment[]
+  orderItems           OrderItem[]
 
   @@index([family])
   @@index([description])
