@@ -85,3 +85,16 @@ export enum SellerPriority {
   HIGH = 'HIGH',
   URGENT = 'URGENT',
 }
+
+export enum DeliveryPlanStatus {
+  DRAFT = 'DRAFT',
+  PLANNED = 'PLANNED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum DispatchOrderStatus {
+  PLANNED = 'PLANNED',
+  READY_TO_LOAD = 'READY_TO_LOAD',
+  LOAD_OPERATION_LINKED = 'LOAD_OPERATION_LINKED',
+  CANCELLED = 'CANCELLED',
+}

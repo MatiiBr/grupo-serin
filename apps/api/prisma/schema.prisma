@@ -95,6 +95,19 @@ enum SellerPriority {
   URGENT
 }
 
+enum DeliveryPlanStatus {
+  DRAFT
+  PLANNED
+  CANCELLED
+}
+
+enum DispatchOrderStatus {
+  PLANNED
+  READY_TO_LOAD
+  LOAD_OPERATION_LINKED
+  CANCELLED
+}
+
 model Customer {
   id        String         @id @default(uuid())
   code      String         @unique
@@ -128,6 +141,7 @@ model Order {
 
   customer Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
   items    OrderItem[]
+  dispatchOrders DispatchOrder[]
 
   @@index([customerId])
   @@index([status, creditStatus])
@@ -152,6 +166,7 @@ model OrderItem {
 
   order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productCatalog ProductCatalog? @relation(fields: [productCatalogId], references: [id], onDelete: SetNull)
+  dispatchItems DispatchOrderItem[]
 
   @@index([orderId])
   @@index([productCatalogId])
@@ -175,6 +190,7 @@ model LoadOperation {
   destinationAssignments OperationDestinationAssignment[]
   productAssignments     OperationProductAssignment[]
   plans                  LoadingPlan[]
+  dispatchOrder          DispatchOrder?
 
   @@index([status])
   @@index([scheduledAt])
@@ -197,6 +213,7 @@ model ProductCatalog {
 
   operationAssignments OperationProductAssignment[]
   orderItems           OrderItem[]
+  dispatchItems        DispatchOrderItem[]
 
   @@index([family])
   @@index([description])
@@ -214,9 +231,77 @@ model DestinationCatalog {
   updatedAt DateTime @updatedAt
 
   operationAssignments OperationDestinationAssignment[]
+  dispatchOrders       DispatchOrder[]
 
   @@index([name])
   @@index([isActive])
+}
+
+model DeliveryPlan {
+  id          String             @id @default(uuid())
+  code        String             @unique
+  status      DeliveryPlanStatus @default(DRAFT)
+  plannedDate DateTime?
+  notes       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  dispatchOrders DispatchOrder[]
+
+  @@index([status])
+  @@index([plannedDate])
+}
+
+model DispatchOrder {
+  id                      String              @id @default(uuid())
+  code                    String              @unique
+  status                  DispatchOrderStatus @default(PLANNED)
+  orderId                 String
+  deliveryPlanId          String?
+  destinationCatalogId    String?
+  destinationNameSnapshot String?
+  sellerPriority          SellerPriority
+  requestedDeliveryAt     DateTime?
+  loadOperationId         String?             @unique
+  notes                   String?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  order              Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  deliveryPlan       DeliveryPlan?       @relation(fields: [deliveryPlanId], references: [id], onDelete: SetNull)
+  destinationCatalog DestinationCatalog? @relation(fields: [destinationCatalogId], references: [id], onDelete: SetNull)
+  loadOperation      LoadOperation?      @relation(fields: [loadOperationId], references: [id], onDelete: SetNull)
+  items              DispatchOrderItem[]
+
+  @@index([status])
+  @@index([orderId])
+  @@index([deliveryPlanId])
+  @@index([destinationCatalogId])
+  @@index([requestedDeliveryAt])
+}
+
+model DispatchOrderItem {
+  id                  String   @id @default(uuid())
+  dispatchOrderId     String
+  orderItemId         String
+  productCatalogId    String
+  productCodeSnapshot String
+  descriptionSnapshot String?
+  quantity            Int      @default(1)
+  weightKg            Decimal? @db.Decimal(12, 3)
+  lengthMm            Int?
+  widthMm             Int?
+  heightMm            Int?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  dispatchOrder DispatchOrder  @relation(fields: [dispatchOrderId], references: [id], onDelete: Cascade)
+  orderItem     OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  productCatalog ProductCatalog @relation(fields: [productCatalogId], references: [id], onDelete: Restrict)
+
+  @@unique([dispatchOrderId, orderItemId])
+  @@index([orderItemId])
+  @@index([productCatalogId])
 }
 
 model TruckCatalog {

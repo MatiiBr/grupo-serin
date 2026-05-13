@@ -1,4 +1,15 @@
-import type { CreditStatus, CustomerStatus, LoadingMethod, OperationStatus, OrderStatus, PlanStatus, ProductFamily, SellerPriority } from './enums';
+import type {
+  CreditStatus,
+  CustomerStatus,
+  DeliveryPlanStatus,
+  DispatchOrderStatus,
+  LoadingMethod,
+  OperationStatus,
+  OrderStatus,
+  PlanStatus,
+  ProductFamily,
+  SellerPriority,
+} from './enums';
 import type { ISODateString, LoadingAlert, ProductReference, TruckReference, UUID } from './types';
 
 export interface CreateLoadingPlanDto {
@@ -247,4 +258,56 @@ export interface CreateOrderDto {
   externalRef?: string;
   notes?: string;
   items: CreateOrderItemDto[];
+}
+
+export interface DeliveryPlanDto {
+  id: UUID;
+  code: string;
+  status: DeliveryPlanStatus;
+  plannedDate?: ISODateString | null;
+  notes?: string | null;
+}
+
+export interface DispatchOrderItemDto {
+  id: UUID;
+  dispatchOrderId: UUID;
+  orderItemId: UUID;
+  productCatalogId: UUID;
+  productCodeSnapshot: string;
+  descriptionSnapshot?: string | null;
+  quantity: number;
+  weightKg?: number | null;
+  lengthMm?: number | null;
+  widthMm?: number | null;
+  heightMm?: number | null;
+}
+
+export interface DispatchOrderDto {
+  id: UUID;
+  code: string;
+  status: DispatchOrderStatus;
+  orderId: UUID;
+  deliveryPlanId?: UUID | null;
+  destinationCatalogId?: UUID | null;
+  destinationNameSnapshot?: string | null;
+  sellerPriority: SellerPriority;
+  requestedDeliveryAt?: ISODateString | null;
+  loadOperationId?: UUID | null;
+  notes?: string | null;
+  items?: DispatchOrderItemDto[];
+  order?: OrderDto;
+  deliveryPlan?: DeliveryPlanDto | null;
+}
+
+export interface CreateDeliveryPlanDto {
+  code?: string;
+  plannedDate?: ISODateString;
+  notes?: string;
+}
+
+export interface CreateDispatchOrderDto {
+  orderId: UUID;
+  code?: string;
+  deliveryPlanId?: UUID;
+  notes?: string;
 }
