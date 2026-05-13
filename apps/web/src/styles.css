@@ -130,6 +130,9 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 .row span, .item span { display: grid; gap: 4px; }
 .chips, .actions { display: flex !important; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .chips i { border-radius: 999px; background: rgba(255,180,95,.12); color: #ffc782; padding: 5px 8px; font-size: .75rem; font-style: normal; }
+.assignment-summary { display: grid; gap: 6px; border: 1px solid rgba(255,180,95,.24); border-radius: 18px; background: rgba(255,180,95,.08); padding: 14px; }
+.assignment-summary strong { color: #fff7e8; }
+.assignment-summary span { color: #d8c8ad; font-size: .88rem; }
 
 .operation-head { display: grid; gap: 26px; align-items: start; }
 .operation-head-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }

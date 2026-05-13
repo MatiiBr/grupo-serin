@@ -211,6 +211,9 @@ export interface OperationDetail extends OperationSummary {
   truck: Truck | null;
   destinations: Destination[];
   products: Product[];
+  vehicleAssignment?: OperationVehicleAssignment | null;
+  destinationAssignments?: OperationDestinationAssignment[];
+  productAssignments?: OperationProductAssignment[];
   latestPlan: {
     id: string;
     version: number;
@@ -223,6 +226,31 @@ export interface OperationDetail extends OperationSummary {
     alerts: PlanAlert[];
     updatedAt: string;
   } | null;
+}
+
+export interface OperationProductAssignmentPayload {
+  productCatalogId: string;
+  operationDestinationId?: string | null;
+  quantity?: number;
+  weightKgOverride?: number;
+  lengthMmOverride?: number;
+  widthMmOverride?: number;
+  heightMmOverride?: number;
+  stackableOverride?: boolean;
+  rotationAllowedOverride?: boolean;
+  notes?: string;
+}
+
+export interface OperationDestinationAssignmentPayload {
+  destinationCatalogId: string;
+  unloadingOrder: number;
+  notes?: string;
+}
+
+export interface UpsertOperationVehicleAssignmentPayload {
+  truckCatalogId: string;
+  trailerCatalogId?: string | null;
+  notes?: string;
 }
 
 export interface PlanMetrics {

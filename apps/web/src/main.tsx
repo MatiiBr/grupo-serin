@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { LoadingMethod, PlanStatus, ProductFamily } from '@camiones/shared';
+import { PlanStatus, ProductFamily } from '@camiones/shared';
 import { Canvas } from '@react-three/fiber';
 import { Edges, OrbitControls, Text } from '@react-three/drei';
 import { StrictMode, useEffect, useMemo, useState } from 'react';
@@ -9,12 +9,10 @@ import { loadingPlansApi } from './api/loading-plans';
 import { operationsApi } from './api/operations';
 import { productsApi } from './api/products';
 import { trucksApi } from './api/trucks';
-import type { Destination, LoadingPlan, OperationDetail, OperationSummary, PlacedItem, PlanAlert, Product, Truck } from './api/types';
+import type { LoadingPlan, OperationDestinationAssignment, OperationDetail, OperationProductAssignment, OperationSummary, OperationVehicleAssignment, PlacedItem, PlanAlert, ProductCatalog, Truck } from './api/types';
 import './styles.css';
 
 const queryClient = new QueryClient();
-const productFamilies = Object.values(ProductFamily);
-const loadingMethods = Object.values(LoadingMethod);
 
 type RouteName = 'operations' | 'operation' | 'truck' | 'destinations' | 'products' | 'planner' | 'report' | 'not-found';
 
@@ -146,9 +144,9 @@ function OperationPage({ operationId }: { operationId: string }) {
           <div className="stack">
             <OperationHeader operation={item} />
               <section className="grid four">
-                <DashboardLink href={`/operations/${operationId}/truck`} label="Camion" value={item.truck?.plate ?? 'Sin definir'} />
-                <DashboardLink href={`/operations/${operationId}/destinations`} label="Destinos" value={String(item.destinations.length)} />
-                <DashboardLink href={`/operations/${operationId}/products`} label="Productos" value={String(item.products.length)} />
+                <DashboardLink href={`/operations/${operationId}/truck`} label="Camion" value={item.vehicleAssignment?.truck?.plate ?? item.truck?.plate ?? 'Sin definir'} />
+                <DashboardLink href={`/operations/${operationId}/destinations`} label="Destinos" value={String(item.destinationAssignments?.length ?? item.destinations.length)} />
+                <DashboardLink href={`/operations/${operationId}/products`} label="Productos" value={String(item.productAssignments?.length ?? item.products.length)} />
                 <DashboardLink href={`/operations/${operationId}/planner`} label="Plan" value={item.latestPlan ? `v${item.latestPlan.version}` : 'Pendiente'} />
               </section>
               {item.latestPlan ? <DashboardLink href={`/operations/${operationId}/report`} label="Reporte operativo" value={item.latestPlan.status} /> : null}
@@ -168,11 +166,13 @@ function OperationPage({ operationId }: { operationId: string }) {
 function TruckPage({ operationId }: { operationId: string }) {
   const queryClient = useQueryClient();
   const operation = useOperation(operationId);
-  const truck = useQuery({ queryKey: ['truck', operationId], queryFn: () => trucksApi.get(operationId) });
-  const saveTruck = useMutation({
-    mutationFn: trucksApi.upsert.bind(null, operationId),
+  const trucks = useQuery({ queryKey: ['truck-catalog'], queryFn: () => trucksApi.searchCatalog() });
+  const trailers = useQuery({ queryKey: ['trailer-catalog'], queryFn: () => trucksApi.searchTrailers() });
+  const vehicle = useQuery({ queryKey: ['vehicle-assignment', operationId], queryFn: () => trucksApi.getAssignment(operationId) });
+  const saveVehicle = useMutation({
+    mutationFn: trucksApi.upsertAssignment.bind(null, operationId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['truck', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['vehicle-assignment', operationId] });
       void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
     },
   });
@@ -181,35 +181,36 @@ function TruckPage({ operationId }: { operationId: string }) {
     <main className="stack">
       <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
       <section className="card">
-        <SectionTitle title="Camion" subtitle="Dimensiones requeridas para generar plan automatico" />
-        <QueryState query={truck}>
-          {(item) => (
+        <SectionTitle title="Vehiculo asignado" subtitle="Seleccion desde catalogo reutilizable de flota" />
+        <QueryState query={trucks}>
+          {(truckItems) => (
+            <QueryState query={trailers}>
+              {(trailerItems) => (
+                <QueryState query={vehicle}>
+                  {(item) => (
             <form
-              className="form matrix"
+              className="form"
               onSubmit={(event) => {
                 event.preventDefault();
                 const form = new FormData(event.currentTarget);
-                saveTruck.mutate({
-                  plate: requiredText(form, 'plate'),
-                  description: optionalText(form, 'description'),
-                  loadingMethod: requiredText(form, 'loadingMethod') as LoadingMethod,
-                  maxPayloadKg: optionalNumber(form, 'maxPayloadKg'),
-                  lengthMm: optionalInteger(form, 'lengthMm'),
-                  widthMm: optionalInteger(form, 'widthMm'),
-                  heightMm: optionalInteger(form, 'heightMm'),
+                saveVehicle.mutate({
+                  truckCatalogId: requiredText(form, 'truckCatalogId'),
+                  trailerCatalogId: optionalText(form, 'trailerCatalogId') ?? null,
+                  notes: optionalText(form, 'notes'),
                 });
               }}
             >
-              <label>Patente<input name="plate" defaultValue={item?.plate ?? ''} required /></label>
-              <label>Metodo<select name="loadingMethod" defaultValue={item?.loadingMethod ?? LoadingMethod.REAR}>{loadingMethods.map((method) => <option key={method}>{method}</option>)}</select></label>
-              <label>Payload kg<input name="maxPayloadKg" type="number" defaultValue={item?.maxPayloadKg ?? ''} /></label>
-              <label>Largo mm<input name="lengthMm" type="number" defaultValue={item?.lengthMm ?? ''} /></label>
-              <label>Ancho mm<input name="widthMm" type="number" defaultValue={item?.widthMm ?? ''} /></label>
-              <label>Alto mm<input name="heightMm" type="number" defaultValue={item?.heightMm ?? ''} /></label>
-              <label className="wide">Descripcion<textarea name="description" rows={3} defaultValue={item?.description ?? ''} /></label>
-              <button disabled={saveTruck.isPending}>Guardar camion</button>
-              <MutationError error={saveTruck.error} />
+              <label>Camion de catalogo<select name="truckCatalogId" defaultValue={item?.truckCatalogId ?? ''} required><option value="">Seleccionar camion</option>{truckItems.map((truck) => <option key={truck.id} value={truck.id}>{truck.plate} / {truck.loadingMethod} / {truck.lengthMm ?? '-'}x{truck.widthMm ?? '-'} mm</option>)}</select></label>
+              <label>Acoplado<select name="trailerCatalogId" defaultValue={item?.trailerCatalogId ?? ''}><option value="">Sin acoplado</option>{trailerItems.map((trailer) => <option key={trailer.id} value={trailer.id}>{trailer.code} / {trailer.lengthMm ?? '-'}x{trailer.widthMm ?? '-'} mm</option>)}</select></label>
+              <label>Notas operativas<textarea name="notes" rows={3} defaultValue={item?.notes ?? ''} /></label>
+              <button disabled={saveVehicle.isPending || truckItems.length === 0}>{saveVehicle.isPending ? 'Asignando' : 'Asignar vehiculo'}</button>
+              <MutationError error={saveVehicle.error} />
+              {item ? <VehicleAssignmentSummary item={item} /> : <p className="muted">Sin vehiculo asignado a esta operacion.</p>}
             </form>
+                  )}
+                </QueryState>
+              )}
+            </QueryState>
           )}
         </QueryState>
       </section>
@@ -220,31 +221,32 @@ function TruckPage({ operationId }: { operationId: string }) {
 function DestinationsPage({ operationId }: { operationId: string }) {
   const queryClient = useQueryClient();
   const operation = useOperation(operationId);
-  const destinations = useQuery({ queryKey: ['destinations', operationId], queryFn: () => destinationsApi.list(operationId) });
+  const catalog = useQuery({ queryKey: ['destination-catalog'], queryFn: () => destinationsApi.searchCatalog() });
+  const destinations = useQuery({ queryKey: ['destination-assignments', operationId], queryFn: () => destinationsApi.listAssignments(operationId) });
   const createDestination = useMutation({
-    mutationFn: destinationsApi.create.bind(null, operationId),
+    mutationFn: destinationsApi.createAssignment.bind(null, operationId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['destinations', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['destination-assignments', operationId] });
       void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
     },
   });
-  const deleteDestination = useDeleteMutation((id: string) => destinationsApi.remove(id), ['destinations', operationId], ['operation', operationId]);
+  const deleteDestination = useDeleteMutation((id: string) => destinationsApi.removeAssignment(id), ['destination-assignments', operationId], ['operation', operationId]);
 
   return (
     <main className="stack">
       <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
       <section className="grid two">
         <div className="card">
-          <SectionTitle title="Agregar destino" subtitle="Orden de descarga obligatorio" />
-          <form className="form" onSubmit={(event) => handleDestinationSubmit(event, createDestination.mutate)}>
-            <label>Nombre<input name="name" required /></label>
+          <SectionTitle title="Asignar destino" subtitle="Catalogo reutilizable + orden operativo" />
+          <QueryState query={catalog}>
+            {(items) => <form className="form" onSubmit={(event) => handleDestinationAssignmentSubmit(event, createDestination.mutate)}>
+            <label>Destino de catalogo<select name="destinationCatalogId" required><option value="">Seleccionar destino</option>{items.map((destination) => <option key={destination.id} value={destination.id}>{destination.name}{destination.code ? ` / ${destination.code}` : ''}</option>)}</select></label>
             <label>Orden<input name="unloadingOrder" type="number" min="1" required /></label>
-            <label>Codigo<input name="code" /></label>
-            <label>Direccion<input name="address" /></label>
-            <label>Notas<textarea name="notes" rows={3} /></label>
-            <button disabled={createDestination.isPending}>Agregar destino</button>
+            <label>Notas de operacion<textarea name="notes" rows={3} /></label>
+            <button disabled={createDestination.isPending || items.length === 0}>Asignar destino</button>
             <MutationError error={createDestination.error} />
-          </form>
+          </form>}
+          </QueryState>
         </div>
         <div className="card">
           <SectionTitle title="Destinos" subtitle="Secuencia operativa" />
@@ -261,50 +263,51 @@ function DestinationsPage({ operationId }: { operationId: string }) {
 function ProductsPage({ operationId }: { operationId: string }) {
   const queryClient = useQueryClient();
   const operation = useOperation(operationId);
-  const destinations = useQuery({ queryKey: ['destinations', operationId], queryFn: () => destinationsApi.list(operationId) });
-  const products = useQuery({ queryKey: ['products', operationId], queryFn: () => productsApi.list(operationId) });
+  const destinations = useQuery({ queryKey: ['destination-assignments', operationId], queryFn: () => destinationsApi.listAssignments(operationId) });
+  const catalog = useQuery({ queryKey: ['product-catalog'], queryFn: () => productsApi.searchCatalog() });
+  const products = useQuery({ queryKey: ['product-assignments', operationId], queryFn: () => productsApi.listAssignments(operationId) });
   const createProduct = useMutation({
-    mutationFn: productsApi.create.bind(null, operationId),
+    mutationFn: productsApi.createAssignment.bind(null, operationId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['products', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['product-assignments', operationId] });
       void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
     },
   });
-  const deleteProduct = useDeleteMutation((id: string) => productsApi.remove(id), ['products', operationId], ['operation', operationId]);
-  const duplicateProduct = useDeleteMutation((id: string) => productsApi.duplicate(id), ['products', operationId], ['operation', operationId]);
+  const deleteProduct = useDeleteMutation((id: string) => productsApi.removeAssignment(id), ['product-assignments', operationId], ['operation', operationId]);
 
   return (
     <main className="stack">
       <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
       <section className="grid two">
         <div className="card">
-          <SectionTitle title="Agregar producto" subtitle="Bulto, peso y huella para el planner" />
+          <SectionTitle title="Asignar producto" subtitle="Catalogo reusable + cantidad y destino de esta operacion" />
           <QueryState query={destinations}>
             {(destinationItems) => (
-              <form className="form matrix" onSubmit={(event) => handleProductSubmit(event, createProduct.mutate)}>
-                <label>Codigo<input name="code" required /></label>
-                <label>Familia<select name="family" defaultValue={ProductFamily.SHEET}>{productFamilies.map((family) => <option key={family}>{family}</option>)}</select></label>
-                <label>Destino<select name="destinationId"><option value="">Sin destino</option>{destinationItems.map((destination) => <option key={destination.id} value={destination.id}>{destination.name}</option>)}</select></label>
+              <QueryState query={catalog}>
+                {(catalogItems) => <form className="form matrix" onSubmit={(event) => handleProductAssignmentSubmit(event, createProduct.mutate)}>
+                <label className="wide">Producto de catalogo<select name="productCatalogId" required><option value="">Seleccionar producto</option>{catalogItems.map((product) => <option key={product.id} value={product.id}>{product.code} / {product.family} / {formatProductDimensions(product)}</option>)}</select></label>
+                <label>Destino<select name="operationDestinationId"><option value="">Sin destino</option>{destinationItems.map((destination) => <option key={destination.id} value={destination.id}>#{destination.unloadingOrder} {destination.catalog?.name ?? destination.destinationCatalogId}</option>)}</select></label>
                 <label>Cantidad<input name="quantity" type="number" min="1" defaultValue="1" /></label>
-                <label>Peso kg<input name="weightKg" type="number" step="0.01" /></label>
-                <label>Largo mm<input name="lengthMm" type="number" /></label>
-                <label>Ancho mm<input name="widthMm" type="number" /></label>
-                <label>Alto mm<input name="heightMm" type="number" /></label>
-                <label className="check"><input name="stackable" type="checkbox" /> Apilable</label>
-                <label className="check"><input name="rotationAllowed" type="checkbox" defaultChecked /> Permite rotacion</label>
-                <label className="wide">Descripcion<textarea name="description" rows={3} /></label>
-                <button disabled={createProduct.isPending}>Agregar producto</button>
+                <label>Peso override kg<input name="weightKgOverride" type="number" step="0.01" /></label>
+                <label>Largo override mm<input name="lengthMmOverride" type="number" /></label>
+                <label>Ancho override mm<input name="widthMmOverride" type="number" /></label>
+                <label>Alto override mm<input name="heightMmOverride" type="number" /></label>
+                <label className="check"><input name="stackableOverride" type="checkbox" /> Forzar apilable</label>
+                <label className="check"><input name="rotationAllowedOverride" type="checkbox" /> Forzar rotacion</label>
+                <label className="wide">Notas operativas<textarea name="notes" rows={3} /></label>
+                <button disabled={createProduct.isPending || catalogItems.length === 0}>Asignar producto</button>
                 <MutationError error={createProduct.error} />
-              </form>
+              </form>}
+              </QueryState>
             )}
           </QueryState>
         </div>
         <div className="card">
-          <SectionTitle title="Productos" subtitle="Duplicar acelera carga repetitiva" />
+          <SectionTitle title="Productos" subtitle="Asignaciones de la operacion" />
           <QueryState query={products}>
-            {(items) => <ProductList items={items} onDelete={(id) => deleteProduct.mutate(id)} onDuplicate={(id) => duplicateProduct.mutate(id)} />}
+            {(items) => <ProductAssignmentList items={items} onDelete={(id) => deleteProduct.mutate(id)} />}
           </QueryState>
-          <MutationError error={deleteProduct.error ?? duplicateProduct.error} />
+          <MutationError error={deleteProduct.error} />
         </div>
       </section>
     </main>
@@ -814,14 +817,28 @@ function DashboardLink({ href, label, value }: { href: string; label: string; va
   return <button className="dash" type="button" onClick={() => navigate(href)}><span>{label}</span><strong>{value}</strong></button>;
 }
 
-function DestinationList({ items, onDelete }: { items: Destination[]; onDelete: (id: string) => void }) {
-  if (items.length === 0) return <p className="muted">Sin destinos cargados.</p>;
-  return <div className="list compact">{items.map((item) => <div className="item" key={item.id}><span><strong>#{item.unloadingOrder} {item.name}</strong><small>{item.code ?? 'Sin codigo'} {item.address ? `/ ${item.address}` : ''}</small></span><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></div>)}</div>;
+function VehicleAssignmentSummary({ item }: { item: OperationVehicleAssignment }) {
+  return (
+    <div className="assignment-summary">
+      <strong>{item.truck?.plate ?? item.truckCatalogId}</strong>
+      <span>{item.truck?.loadingMethod ?? '-'} / {item.truck?.lengthMm ?? '-'} x {item.truck?.widthMm ?? '-'} x {item.truck?.heightMm ?? '-'} mm</span>
+      {item.trailer ? <span>Acoplado: {item.trailer.code}</span> : <span>Sin acoplado asignado</span>}
+    </div>
+  );
 }
 
-function ProductList({ items, onDelete, onDuplicate }: { items: Product[]; onDelete: (id: string) => void; onDuplicate: (id: string) => void }) {
+function DestinationList({ items, onDelete }: { items: OperationDestinationAssignment[]; onDelete: (id: string) => void }) {
+  if (items.length === 0) return <p className="muted">Sin destinos cargados.</p>;
+  return <div className="list compact">{items.map((item) => <div className="item" key={item.id}><span><strong>#{item.unloadingOrder} {item.catalog?.name ?? item.destinationCatalogId}</strong><small>{item.catalog?.code ?? 'Sin codigo'} {item.catalog?.address ? `/ ${item.catalog.address}` : ''}{item.notes ? ` / ${item.notes}` : ''}</small></span><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></div>)}</div>;
+}
+
+function ProductAssignmentList({ items, onDelete }: { items: OperationProductAssignment[]; onDelete: (id: string) => void }) {
   if (items.length === 0) return <p className="muted">Sin productos cargados.</p>;
-  return <div className="list compact">{items.map((item) => <div className="item" key={item.id}><span><strong>{item.code}</strong><small>{item.family} / qty {item.quantity} / {item.weightKg ?? 0} kg / {item.stackable ? 'apilable' : 'no apilable'} / {item.rotationAllowed ? 'rota' : 'fijo'}</small></span><span className="actions"><button className="ghost" onClick={() => onDuplicate(item.id)}>Duplicar</button><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></span></div>)}</div>;
+  return <div className="list compact">{items.map((item) => {
+    const product = item.catalog;
+    const destination = item.operationDestination?.catalog;
+    return <div className="item" key={item.id}><span><strong>{product?.code ?? item.productCatalogId}</strong><small>{product?.family ?? '-'} / qty {item.quantity} / destino {destination?.name ?? 'sin destino'} / {formatAssignmentWeight(item, product)} / {formatProductDimensions(product)}</small></span><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></div>;
+  })}</div>;
 }
 
 function MetricGrid({ metrics }: { metrics: LoadingPlan['metrics'] }) {
@@ -873,36 +890,37 @@ function useDeleteMutation<T>(mutationFn: (id: string) => Promise<T>, ...queryKe
   });
 }
 
-function handleDestinationSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof destinationsApi.create>[1]) => void) {
+function handleDestinationAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof destinationsApi.createAssignment>[1]) => void) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   submit({
-    name: requiredText(form, 'name'),
+    destinationCatalogId: requiredText(form, 'destinationCatalogId'),
     unloadingOrder: requiredInteger(form, 'unloadingOrder'),
-    code: optionalText(form, 'code'),
-    address: optionalText(form, 'address'),
     notes: optionalText(form, 'notes'),
   });
   event.currentTarget.reset();
 }
 
-function handleProductSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof productsApi.create>[1]) => void) {
+function handleProductAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof productsApi.createAssignment>[1]) => void) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   submit({
-    destinationId: optionalText(form, 'destinationId'),
-    code: requiredText(form, 'code'),
-    family: requiredText(form, 'family') as ProductFamily,
-    description: optionalText(form, 'description'),
+    productCatalogId: requiredText(form, 'productCatalogId'),
+    operationDestinationId: optionalText(form, 'operationDestinationId') ?? null,
     quantity: optionalInteger(form, 'quantity'),
-    weightKg: optionalNumber(form, 'weightKg'),
-    lengthMm: optionalInteger(form, 'lengthMm'),
-    widthMm: optionalInteger(form, 'widthMm'),
-    heightMm: optionalInteger(form, 'heightMm'),
-    stackable: form.get('stackable') === 'on',
-    rotationAllowed: form.get('rotationAllowed') === 'on',
+    weightKgOverride: optionalNumber(form, 'weightKgOverride'),
+    lengthMmOverride: optionalInteger(form, 'lengthMmOverride'),
+    widthMmOverride: optionalInteger(form, 'widthMmOverride'),
+    heightMmOverride: optionalInteger(form, 'heightMmOverride'),
+    stackableOverride: optionalCheckedOverride(form, 'stackableOverride'),
+    rotationAllowedOverride: optionalCheckedOverride(form, 'rotationAllowedOverride'),
+    notes: optionalText(form, 'notes'),
   });
   event.currentTarget.reset();
+}
+
+function optionalCheckedOverride(form: FormData, key: string) {
+  return form.get(key) === 'on' ? true : undefined;
 }
 
 function requiredText(form: FormData, key: string) {
@@ -937,6 +955,15 @@ function optionalDate(form: FormData, key: string) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+}
+
+function formatProductDimensions(product: ProductCatalog | undefined) {
+  if (!product) return 'dimensiones sin catalogo';
+  return `${product.lengthMm ?? '-'} x ${product.widthMm ?? '-'} x ${product.heightMm ?? '-'} mm`;
+}
+
+function formatAssignmentWeight(assignment: OperationProductAssignment, product: ProductCatalog | undefined) {
+  return formatNumber(assignment.weightKgOverride ?? product?.weightKg, 'kg');
 }
 
 function formatNumber(value: number | string | null | undefined, suffix: string) {

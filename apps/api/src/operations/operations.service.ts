@@ -44,7 +44,7 @@ export class OperationsService {
     const operations = await this.prisma.loadOperation.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
-        _count: { select: { destinations: true, products: true, plans: true } },
+        _count: { select: { destinationAssignments: true, productAssignments: true, plans: true } },
       },
     });
 
@@ -58,6 +58,12 @@ export class OperationsService {
         truck: { include: { zones: { orderBy: { type: 'asc' } } } },
         destinations: { orderBy: { unloadingOrder: 'asc' } },
         products: { orderBy: { createdAt: 'asc' } },
+        vehicleAssignment: { include: { truck: true, trailer: true, zones: { orderBy: { type: 'asc' } } } },
+        destinationAssignments: { orderBy: { unloadingOrder: 'asc' }, include: { catalog: true } },
+        productAssignments: {
+          orderBy: { createdAt: 'asc' },
+          include: { catalog: true, operationDestination: { include: { catalog: true } } },
+        },
         plans: {
           orderBy: [{ isCurrent: 'desc' }, { version: 'desc' }],
           take: 1,
@@ -92,6 +98,34 @@ export class OperationsService {
       products: operation.products.map((product) => ({
         ...product,
         weightKg: decimalToNumber(product.weightKg),
+      })),
+      vehicleAssignment: operation.vehicleAssignment
+        ? {
+            ...operation.vehicleAssignment,
+            truck: {
+              ...operation.vehicleAssignment.truck,
+              maxPayloadKg: decimalToNumber(operation.vehicleAssignment.truck.maxPayloadKg),
+            },
+            trailer: operation.vehicleAssignment.trailer
+              ? {
+                  ...operation.vehicleAssignment.trailer,
+                  maxPayloadKg: decimalToNumber(operation.vehicleAssignment.trailer.maxPayloadKg),
+                }
+              : null,
+            zones: operation.vehicleAssignment.zones.map((zone) => ({
+              ...zone,
+              maxWeightKg: decimalToNumber(zone.maxWeightKg),
+            })),
+          }
+        : null,
+      destinationAssignments: operation.destinationAssignments,
+      productAssignments: operation.productAssignments.map((assignment) => ({
+        ...assignment,
+        weightKgOverride: decimalToNumber(assignment.weightKgOverride),
+        catalog: {
+          ...assignment.catalog,
+          weightKg: decimalToNumber(assignment.catalog.weightKg),
+        },
       })),
       latestPlan: latestPlan
         ? {
@@ -142,7 +176,7 @@ export class OperationsService {
     scheduledAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
-    _count?: { destinations: number; products: number; plans: number };
+    _count?: { destinationAssignments?: number; productAssignments?: number; destinations?: number; products?: number; plans: number };
   }) {
     return {
       id: operation.id,
@@ -155,8 +189,8 @@ export class OperationsService {
       updatedAt: operation.updatedAt,
       counts: operation._count
         ? {
-            destinations: operation._count.destinations,
-            products: operation._count.products,
+            destinations: operation._count.destinationAssignments ?? operation._count.destinations ?? 0,
+            products: operation._count.productAssignments ?? operation._count.products ?? 0,
             plans: operation._count.plans,
           }
         : undefined,

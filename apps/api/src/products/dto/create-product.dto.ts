@@ -2,12 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ProductFamily } from '@prisma/client';
 import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 
-export class CreateProductDto {
-  @ApiPropertyOptional({ example: '550e8400-e29b-41d4-a716-446655440000' })
-  @IsOptional()
-  @IsUUID()
-  destinationId?: string;
-
+export class CreateProductCatalogDto {
   @ApiProperty({ example: 'CHAPA-001' })
   @IsString()
   @MaxLength(128)
@@ -21,12 +16,6 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   description?: string;
-
-  @ApiPropertyOptional({ example: 1, default: 1 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  quantity?: number;
 
   @ApiPropertyOptional({ example: 1250.5 })
   @IsOptional()
@@ -62,3 +51,61 @@ export class CreateProductDto {
   @IsBoolean()
   rotationAllowed?: boolean;
 }
+
+export class CreateOperationProductAssignmentDto {
+  @ApiProperty({ example: '550e8400-e29b-41d4-a716-446655440000' })
+  @IsUUID()
+  productCatalogId!: string;
+
+  @ApiPropertyOptional({ example: '550e8400-e29b-41d4-a716-446655440001' })
+  @IsOptional()
+  @IsUUID()
+  operationDestinationId?: string;
+
+  @ApiPropertyOptional({ example: 1, default: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  quantity?: number;
+
+  @ApiPropertyOptional({ example: 1250.5 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  weightKgOverride?: number;
+
+  @ApiPropertyOptional({ example: 6000 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  lengthMmOverride?: number;
+
+  @ApiPropertyOptional({ example: 1500 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  widthMmOverride?: number;
+
+  @ApiPropertyOptional({ example: 800 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  heightMmOverride?: number;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  stackableOverride?: boolean;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  rotationAllowedOverride?: boolean;
+
+  @ApiPropertyOptional({ example: 'Usar separadores para esta operación.' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class CreateProductDto extends CreateProductCatalogDto {}
