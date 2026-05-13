@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -12,8 +12,8 @@ export class OrdersController {
 
   @Post('customers')
   @ApiCreatedResponse({ description: 'Creates a customer for manual order intake.' })
-  createCustomer(@Body() dto: CreateCustomerDto) {
-    return this.ordersService.createCustomer(dto);
+  createCustomer(@Body() dto: CreateCustomerDto, @Headers('x-actor') actor?: string) {
+    return this.ordersService.createCustomer(dto, actor);
   }
 
   @Get('customers')
@@ -24,14 +24,14 @@ export class OrdersController {
 
   @Patch('customers/:id')
   @ApiOkResponse({ description: 'Updates a customer.' })
-  updateCustomer(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto) {
-    return this.ordersService.updateCustomer(id, dto);
+  updateCustomer(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto, @Headers('x-actor') actor?: string) {
+    return this.ordersService.updateCustomer(id, dto, actor);
   }
 
   @Post('orders')
   @ApiCreatedResponse({ description: 'Creates a manual customer order with item demand.' })
-  createOrder(@Body() dto: CreateOrderDto) {
-    return this.ordersService.createOrder(dto);
+  createOrder(@Body() dto: CreateOrderDto, @Headers('x-actor') actor?: string) {
+    return this.ordersService.createOrder(dto, actor);
   }
 
   @Get('orders')
@@ -54,13 +54,13 @@ export class OrdersController {
 
   @Post('orders/:id/credit-hold')
   @ApiOkResponse({ description: 'Places an order on credit hold.' })
-  holdCredit(@Param('id', ParseUUIDPipe) id: string) {
-    return this.ordersService.holdCredit(id);
+  holdCredit(@Param('id', ParseUUIDPipe) id: string, @Headers('x-actor') actor?: string) {
+    return this.ordersService.holdCredit(id, actor);
   }
 
   @Post('orders/:id/credit-release')
   @ApiOkResponse({ description: 'Releases an order for dispatch demand.' })
-  releaseCredit(@Param('id', ParseUUIDPipe) id: string) {
-    return this.ordersService.releaseCredit(id);
+  releaseCredit(@Param('id', ParseUUIDPipe) id: string, @Headers('x-actor') actor?: string) {
+    return this.ordersService.releaseCredit(id, actor);
   }
 }

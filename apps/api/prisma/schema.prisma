@@ -108,6 +108,43 @@ enum DispatchOrderStatus {
   CANCELLED
 }
 
+enum AuditAction {
+  CREATED
+  STATUS_CHANGED
+  CREDIT_HELD
+  CREDIT_RELEASED
+  READY_TO_LOAD
+  LOAD_OPERATION_CREATED
+  APPROVED
+  MANUAL_ADJUSTED
+}
+
+enum AuditSource {
+  SYSTEM
+  API
+}
+
+model AuditEvent {
+  id                String      @id @default(uuid())
+  actor             String      @default("system")
+  source            AuditSource @default(SYSTEM)
+  action            AuditAction
+  entityType        String
+  entityId          String
+  entityCode        String?
+  relatedEntityType String?
+  relatedEntityId   String?
+  before            Json?
+  after             Json?
+  metadata          Json?
+  createdAt         DateTime    @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
 model Customer {
   id        String         @id @default(uuid())
   code      String         @unique

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
 import { LoadingPlansService } from './loading-plans.service';
@@ -28,8 +28,8 @@ export class LoadingPlansController {
 
   @Post('loading-plans/:planId/approve')
   @ApiOkResponse({ description: 'Approves a valid loading plan and its parent operation.' })
-  approve(@Param('planId', ParseUUIDPipe) planId: string) {
-    return this.loadingPlansService.approve(planId);
+  approve(@Param('planId', ParseUUIDPipe) planId: string, @Headers('x-actor') actor?: string) {
+    return this.loadingPlansService.approve(planId, actor);
   }
 
   @Get('loading-plans/:planId/report')
@@ -44,7 +44,8 @@ export class LoadingPlansController {
     @Param('planId', ParseUUIDPipe) planId: string,
     @Param('placedItemId', ParseUUIDPipe) placedItemId: string,
     @Body() dto: UpdatePlacedItemDto,
+    @Headers('x-actor') actor?: string,
   ) {
-    return this.loadingPlansService.updatePlacedItem(planId, placedItemId, dto);
+    return this.loadingPlansService.updatePlacedItem(planId, placedItemId, dto, actor);
   }
 }

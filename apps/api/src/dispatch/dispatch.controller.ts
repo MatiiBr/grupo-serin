@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { DispatchService } from './dispatch.service';
 import { CreateDeliveryPlanDto } from './dto/create-delivery-plan.dto';
@@ -11,8 +11,8 @@ export class DispatchController {
 
   @Post('delivery-plans')
   @ApiCreatedResponse({ description: 'Creates a delivery plan foundation record.' })
-  createDeliveryPlan(@Body() dto: CreateDeliveryPlanDto) {
-    return this.dispatchService.createDeliveryPlan(dto);
+  createDeliveryPlan(@Body() dto: CreateDeliveryPlanDto, @Headers('x-actor') actor?: string) {
+    return this.dispatchService.createDeliveryPlan(dto, actor);
   }
 
   @Get('delivery-plans')
@@ -23,8 +23,8 @@ export class DispatchController {
 
   @Post('dispatch-orders')
   @ApiCreatedResponse({ description: 'Creates a dispatch order from eligible released order demand.' })
-  createDispatchOrder(@Body() dto: CreateDispatchOrderDto) {
-    return this.dispatchService.createDispatchOrder(dto);
+  createDispatchOrder(@Body() dto: CreateDispatchOrderDto, @Headers('x-actor') actor?: string) {
+    return this.dispatchService.createDispatchOrder(dto, actor);
   }
 
   @Get('dispatch-orders')
@@ -35,13 +35,13 @@ export class DispatchController {
 
   @Post('dispatch-orders/:id/ready')
   @ApiOkResponse({ description: 'Marks a dispatch order snapshot ready for loading.' })
-  markReady(@Param('id', ParseUUIDPipe) id: string) {
-    return this.dispatchService.markReady(id);
+  markReady(@Param('id', ParseUUIDPipe) id: string, @Headers('x-actor') actor?: string) {
+    return this.dispatchService.markReady(id, actor);
   }
 
   @Post('dispatch-orders/:id/load-operation')
   @ApiCreatedResponse({ description: 'Creates or returns the load operation snapshot for a ready dispatch order.' })
-  createLoadOperation(@Param('id', ParseUUIDPipe) id: string) {
-    return this.dispatchService.createLoadOperation(id);
+  createLoadOperation(@Param('id', ParseUUIDPipe) id: string, @Headers('x-actor') actor?: string) {
+    return this.dispatchService.createLoadOperation(id, actor);
   }
 }

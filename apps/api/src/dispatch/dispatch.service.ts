@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AuditAction, AuditSource, Prisma } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import { canCreateDispatchOrder, ensureDispatchReadyForLoading, markLoadOperationLinked, markReadyToLoad } from '../domain/dispatch/dispatch-lifecycle';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDeliveryPlanDto } from './dto/create-delivery-plan.dto';
@@ -20,17 +21,30 @@ function generateCode(prefix: string) {
 
 @Injectable()
 export class DispatchService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
-  async createDeliveryPlan(dto: CreateDeliveryPlanDto) {
+  async createDeliveryPlan(dto: CreateDeliveryPlanDto, actor?: string) {
     try {
-      return await this.prisma.deliveryPlan.create({
+      const plan = await this.prisma.deliveryPlan.create({
         data: {
           code: dto.code ?? generateCode('DP'),
           plannedDate: dto.plannedDate ? new Date(dto.plannedDate) : undefined,
           notes: dto.notes,
         },
       });
+      await this.audit.record({
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.CREATED,
+        entityType: 'DeliveryPlan',
+        entityId: plan.id,
+        entityCode: plan.code,
+        after: { code: plan.code, status: plan.status, plannedDate: plan.plannedDate?.toISOString() ?? null },
+      });
+      return plan;
     } catch (error) {
       this.handleUniqueConstraint(error, 'A delivery plan with this code already exists.');
       throw error;
@@ -41,7 +55,7 @@ export class DispatchService {
     return this.prisma.deliveryPlan.findMany({ orderBy: [{ plannedDate: 'asc' }, { createdAt: 'desc' }] });
   }
 
-  async createDispatchOrder(dto: CreateDispatchOrderDto) {
+  async createDispatchOrder(dto: CreateDispatchOrderDto, actor?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
       include: { customer: true, items: { orderBy: { createdAt: 'asc' }, include: { productCatalog: true } } },
@@ -84,6 +98,18 @@ export class DispatchService {
         include: this.dispatchInclude(),
       });
 
+      await this.audit.record({
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.CREATED,
+        entityType: 'DispatchOrder',
+        entityId: dispatchOrder.id,
+        entityCode: dispatchOrder.code,
+        relatedEntityType: 'Order',
+        relatedEntityId: dispatchOrder.orderId,
+        after: { status: dispatchOrder.status, itemCount: dispatchOrder.items.length },
+      });
+
       return this.toDispatchResponse(dispatchOrder);
     } catch (error) {
       this.handleUniqueConstraint(error, 'A dispatch order with this code already exists.');
@@ -99,16 +125,28 @@ export class DispatchService {
     return orders.map((order) => this.toDispatchResponse(order));
   }
 
-  async markReady(id: string) {
+  async markReady(id: string, actor?: string) {
     const dispatchOrder = await this.prisma.dispatchOrder.findUnique({ where: { id }, include: { items: true } });
     if (!dispatchOrder) throw new NotFoundException('Dispatch order not found.');
     if (dispatchOrder.items.length === 0) throw new BadRequestException('Dispatch order must have at least one item before loading handoff.');
 
     const updated = await this.prisma.dispatchOrder.update({ where: { id }, data: markReadyToLoad(), include: this.dispatchInclude() });
+    await this.audit.record({
+      actor,
+      source: AuditSource.API,
+      action: AuditAction.READY_TO_LOAD,
+      entityType: 'DispatchOrder',
+      entityId: updated.id,
+      entityCode: updated.code,
+      relatedEntityType: 'Order',
+      relatedEntityId: updated.orderId,
+      before: { status: dispatchOrder.status },
+      after: { status: updated.status },
+    });
     return this.toDispatchResponse(updated);
   }
 
-  async createLoadOperation(id: string) {
+  async createLoadOperation(id: string, actor?: string) {
     const dispatchOrder = await this.prisma.dispatchOrder.findUnique({
       where: { id },
       include: {
@@ -168,6 +206,18 @@ export class DispatchService {
       });
 
       await tx.dispatchOrder.update({ where: { id }, data: { ...markLoadOperationLinked(), loadOperationId: createdOperation.id } });
+      await this.audit.recordWithClient(tx, {
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.LOAD_OPERATION_CREATED,
+        entityType: 'DispatchOrder',
+        entityId: dispatchOrder.id,
+        entityCode: dispatchOrder.code,
+        relatedEntityType: 'LoadOperation',
+        relatedEntityId: createdOperation.id,
+        before: { status: dispatchOrder.status, loadOperationId: dispatchOrder.loadOperationId },
+        after: { status: markLoadOperationLinked().status, loadOperationId: createdOperation.id },
+      });
       return createdOperation;
     });
 

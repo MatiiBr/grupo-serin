@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
+import { AuditModule } from './audit/audit.module';
 import { DestinationsModule } from './destinations/destinations.module';
 import { DispatchModule } from './dispatch/dispatch.module';
 import { LoadingPlansModule } from './loading-plans/loading-plans.module';
@@ -13,6 +14,7 @@ import { TrucksModule } from './trucks/trucks.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    AuditModule,
     PrismaModule,
     OperationsModule,
     TrucksModule,

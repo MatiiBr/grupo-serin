@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AuditAction, AuditSource, Prisma } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import { canFeedDispatchDemand, applyCreditHold, applyCreditRelease } from '../domain/orders/order-lifecycle';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
@@ -21,11 +22,24 @@ function generateOrderCode() {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
-  async createCustomer(dto: CreateCustomerDto) {
+  async createCustomer(dto: CreateCustomerDto, actor?: string) {
     try {
-      return await this.prisma.customer.create({ data: dto });
+      const customer = await this.prisma.customer.create({ data: dto });
+      await this.audit.record({
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.CREATED,
+        entityType: 'Customer',
+        entityId: customer.id,
+        entityCode: customer.code,
+        after: { code: customer.code, name: customer.name, status: customer.status },
+      });
+      return customer;
     } catch (error) {
       this.handleUniqueConstraint(error, 'A customer with this code already exists.');
       throw error;
@@ -47,18 +61,29 @@ export class OrdersService {
     });
   }
 
-  async updateCustomer(id: string, dto: UpdateCustomerDto) {
-    await this.ensureCustomerExists(id);
+  async updateCustomer(id: string, dto: UpdateCustomerDto, actor?: string) {
+    const before = await this.ensureCustomerExists(id);
 
     try {
-      return await this.prisma.customer.update({ where: { id }, data: dto });
+      const customer = await this.prisma.customer.update({ where: { id }, data: dto });
+      await this.audit.record({
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.STATUS_CHANGED,
+        entityType: 'Customer',
+        entityId: customer.id,
+        entityCode: customer.code,
+        before: { code: before.code, name: before.name, status: before.status },
+        after: { code: customer.code, name: customer.name, status: customer.status },
+      });
+      return customer;
     } catch (error) {
       this.handleUniqueConstraint(error, 'A customer with this code already exists.');
       throw error;
     }
   }
 
-  async createOrder(dto: CreateOrderDto) {
+  async createOrder(dto: CreateOrderDto, actor?: string) {
     await this.ensureCustomerExists(dto.customerId);
     await this.ensureDestinationCatalogExists(dto.destinationCatalogId);
     await this.ensureProductCatalogsExist(dto.items.map((item) => item.productCatalogId).filter((id): id is string => Boolean(id)));
@@ -77,6 +102,18 @@ export class OrdersService {
           items: { create: dto.items },
         },
         include: this.orderInclude(),
+      });
+
+      await this.audit.record({
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.CREATED,
+        entityType: 'Order',
+        entityId: order.id,
+        entityCode: order.code,
+        relatedEntityType: 'Customer',
+        relatedEntityId: order.customerId,
+        after: { status: order.status, creditStatus: order.creditStatus, itemCount: order.items.length },
       });
 
       return this.toOrderResponse(order);
@@ -101,15 +138,39 @@ export class OrdersService {
     return this.toOrderResponse(order);
   }
 
-  async holdCredit(id: string) {
-    await this.ensureOrderExists(id);
+  async holdCredit(id: string, actor?: string) {
+    const before = await this.ensureOrderExists(id);
     const order = await this.prisma.order.update({ where: { id }, data: applyCreditHold(), include: this.orderInclude() });
+    await this.audit.record({
+      actor,
+      source: AuditSource.API,
+      action: AuditAction.CREDIT_HELD,
+      entityType: 'Order',
+      entityId: order.id,
+      entityCode: order.code,
+      relatedEntityType: 'Customer',
+      relatedEntityId: order.customerId,
+      before: { status: before.status, creditStatus: before.creditStatus },
+      after: { status: order.status, creditStatus: order.creditStatus },
+    });
     return this.toOrderResponse(order);
   }
 
-  async releaseCredit(id: string) {
-    await this.ensureOrderExists(id);
+  async releaseCredit(id: string, actor?: string) {
+    const before = await this.ensureOrderExists(id);
     const order = await this.prisma.order.update({ where: { id }, data: applyCreditRelease(), include: this.orderInclude() });
+    await this.audit.record({
+      actor,
+      source: AuditSource.API,
+      action: AuditAction.CREDIT_RELEASED,
+      entityType: 'Order',
+      entityId: order.id,
+      entityCode: order.code,
+      relatedEntityType: 'Customer',
+      relatedEntityId: order.customerId,
+      before: { status: before.status, creditStatus: before.creditStatus },
+      after: { status: order.status, creditStatus: order.creditStatus },
+    });
     return this.toOrderResponse(order);
   }
 
@@ -124,13 +185,15 @@ export class OrdersService {
   }
 
   private async ensureCustomerExists(id: string) {
-    const customer = await this.prisma.customer.findUnique({ where: { id }, select: { id: true } });
+    const customer = await this.prisma.customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException('Customer not found.');
+    return customer;
   }
 
   private async ensureOrderExists(id: string) {
-    const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true } });
+    const order = await this.prisma.order.findUnique({ where: { id } });
     if (!order) throw new NotFoundException('Order not found.');
+    return order;
   }
 
   private async ensureDestinationCatalogExists(id?: string) {

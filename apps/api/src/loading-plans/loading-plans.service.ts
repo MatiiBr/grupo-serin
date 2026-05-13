@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AlertSeverity, AlertType, OperationStatus, PlanStatus, Prisma, TruckZoneType } from '@prisma/client';
+import { AlertSeverity, AlertType, AuditAction, AuditSource, OperationStatus, PlanStatus, Prisma, TruckZoneType } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import { HeuristicLoadingPlanner } from '../domain/loading-planner/heuristic-loading-planner';
 import { Bounds, isWithinBounds, overlaps } from '../domain/loading-planner/geometry';
 import { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loading-planner/loading-planner.types';
@@ -52,7 +53,10 @@ type RecalculationTruckZone = NonNullable<RecalculationPlan['operation']['truck'
 export class LoadingPlansService {
   private readonly planner = new HeuristicLoadingPlanner();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async generate(operationId: string) {
     const operation = await this.prisma.loadOperation.findUnique({
@@ -201,7 +205,7 @@ export class LoadingPlansService {
     return this.toDto(plan);
   }
 
-  async approve(planId: string) {
+  async approve(planId: string, actor?: string) {
     const plan = await this.prisma.loadingPlan.findUnique({ where: { id: planId }, include: loadingPlanInclude });
 
     if (!plan) {
@@ -224,6 +228,19 @@ export class LoadingPlansService {
         data: { status: OperationStatus.APPROVED },
       });
 
+      await this.audit.recordWithClient(tx, {
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.APPROVED,
+        entityType: 'LoadingPlan',
+        entityId: plan.id,
+        relatedEntityType: 'LoadOperation',
+        relatedEntityId: plan.operationId,
+        before: { planStatus: plan.status, operationStatus: plan.operation.status },
+        after: { planStatus: PlanStatus.APPROVED, operationStatus: OperationStatus.APPROVED },
+        metadata: { criticalAlertCount },
+      });
+
       return tx.loadingPlan.findUniqueOrThrow({ where: { id: planId }, include: loadingPlanInclude });
     });
 
@@ -240,7 +257,7 @@ export class LoadingPlansService {
     return this.toReportDto(plan);
   }
 
-  async updatePlacedItem(planId: string, placedItemId: string, dto: UpdatePlacedItemDto) {
+  async updatePlacedItem(planId: string, placedItemId: string, dto: UpdatePlacedItemDto, actor?: string) {
     if (Object.values(dto).every((value) => value === undefined)) {
       throw new BadRequestException('At least one placement field is required.');
     }
@@ -324,6 +341,31 @@ export class LoadingPlansService {
       });
 
       await tx.loadingPlan.update({ where: { id: planId }, data: { status: PlanStatus.MODIFIED } });
+      await this.audit.recordWithClient(tx, {
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.MANUAL_ADJUSTED,
+        entityType: 'PlacedItem',
+        entityId: placedItemId,
+        relatedEntityType: 'LoadingPlan',
+        relatedEntityId: planId,
+        before: {
+          xMm: currentItem.xMm,
+          yMm: currentItem.yMm,
+          zMm: currentItem.zMm,
+          rotationDeg: currentItem.rotationDeg,
+          locked: currentItem.locked,
+        },
+        after: {
+          xMm: updatedItem.xMm,
+          yMm: updatedItem.yMm,
+          zMm: updatedItem.zMm,
+          rotationDeg: updatedItem.rotationDeg,
+          locked: updatedItem.locked,
+          truckZoneId,
+          planStatus: PlanStatus.MODIFIED,
+        },
+      });
       return tx.loadingPlan.findUniqueOrThrow({ where: { id: planId }, include: loadingPlanInclude });
     });
 

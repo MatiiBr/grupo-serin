@@ -9,6 +9,8 @@ import type {
   PlanStatus,
   ProductFamily,
   SellerPriority,
+  AuditAction,
+  AuditSource,
 } from './enums';
 import type { ISODateString, LoadingAlert, ProductReference, TruckReference, UUID } from './types';
 
@@ -310,4 +312,25 @@ export interface CreateDispatchOrderDto {
   code?: string;
   deliveryPlanId?: UUID;
   notes?: string;
+}
+
+export interface AuditEventDto {
+  id: UUID;
+  actor: string;
+  source: AuditSource;
+  action: AuditAction;
+  entityType: string;
+  entityId: UUID;
+  entityCode?: string | null;
+  relatedEntityType?: string | null;
+  relatedEntityId?: UUID | null;
+  before?: unknown;
+  after?: unknown;
+  metadata?: unknown;
+  createdAt: ISODateString;
+}
+
+export interface AuditEventQueryDto {
+  entityType: string;
+  entityId: UUID;
 }

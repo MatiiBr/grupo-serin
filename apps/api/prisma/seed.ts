@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { LoadingMethod, OperationStatus, PlanStatus, ProductFamily, TruckZoneType } from '@prisma/client';
+import { AuditService } from '../src/audit/audit.service';
 import { LoadingPlansService } from '../src/loading-plans/loading-plans.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -141,7 +142,8 @@ async function main() {
       ],
     });
 
-    const loadingPlansService = new LoadingPlansService(prisma);
+    const auditService = new AuditService(prisma);
+    const loadingPlansService = new LoadingPlansService(prisma, auditService);
     const plan = await loadingPlansService.generate(operation.id);
     const completeTruckDemo = await createCompleteTruckDemo(prisma, loadingPlansService);
     const volumetricDemo = await createVolumetricDemo(prisma);
