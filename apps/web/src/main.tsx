@@ -1,0 +1,954 @@
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { LoadingMethod, PlanStatus, ProductFamily } from '@camiones/shared';
+import { Canvas } from '@react-three/fiber';
+import { Edges, OrbitControls, Text } from '@react-three/drei';
+import { StrictMode, useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { destinationsApi } from './api/destinations';
+import { loadingPlansApi } from './api/loading-plans';
+import { operationsApi } from './api/operations';
+import { productsApi } from './api/products';
+import { trucksApi } from './api/trucks';
+import type { Destination, LoadingPlan, OperationDetail, OperationSummary, PlacedItem, PlanAlert, Product, Truck } from './api/types';
+import './styles.css';
+
+const queryClient = new QueryClient();
+const productFamilies = Object.values(ProductFamily);
+const loadingMethods = Object.values(LoadingMethod);
+
+type RouteName = 'operations' | 'operation' | 'truck' | 'destinations' | 'products' | 'planner' | 'report' | 'not-found';
+
+interface Route {
+  name: RouteName;
+  operationId?: string;
+}
+
+function parseRoute(pathname: string): Route {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length === 0) return { name: 'operations' };
+  if (parts[0] !== 'operations') return { name: 'not-found' };
+  if (parts.length === 1) return { name: 'operations' };
+  const operationId = parts[1];
+  if (parts.length === 2) return { name: 'operation', operationId };
+  if (parts[2] === 'truck') return { name: 'truck', operationId };
+  if (parts[2] === 'destinations') return { name: 'destinations', operationId };
+  if (parts[2] === 'products') return { name: 'products', operationId };
+  if (parts[2] === 'planner') return { name: 'planner', operationId };
+  if (parts[2] === 'report') return { name: 'report', operationId };
+  return { name: 'not-found' };
+}
+
+function navigate(path: string) {
+  window.history.pushState(null, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+function useRoute() {
+  const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
+
+  useEffect(() => {
+    const onPopState = () => setRoute(parseRoute(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  return route;
+}
+
+function App() {
+  const route = useRoute();
+
+  return (
+    <div className="shell">
+      <header className="masthead">
+        <button className="brand" type="button" onClick={() => navigate('/operations')}>
+          <span>Camiones</span>
+          <strong>Stowage Control</strong>
+        </button>
+        <div className="status-strip">Acerera / Carga / Planificacion interna</div>
+      </header>
+
+      {route.name === 'operations' && <OperationsPage />}
+      {route.name === 'operation' && route.operationId && <OperationPage operationId={route.operationId} />}
+      {route.name === 'truck' && route.operationId && <TruckPage operationId={route.operationId} />}
+      {route.name === 'destinations' && route.operationId && <DestinationsPage operationId={route.operationId} />}
+      {route.name === 'products' && route.operationId && <ProductsPage operationId={route.operationId} />}
+      {route.name === 'planner' && route.operationId && <PlannerPage operationId={route.operationId} />}
+      {route.name === 'report' && route.operationId && <ReportPage operationId={route.operationId} />}
+      {route.name === 'not-found' && <EmptyState title="Ruta no encontrada" text="Volver al tablero de operaciones." />}
+    </div>
+  );
+}
+
+function OperationsPage() {
+  const queryClient = useQueryClient();
+  const operations = useQuery({ queryKey: ['operations'], queryFn: operationsApi.list });
+  const createOperation = useMutation({
+    mutationFn: operationsApi.create,
+    onSuccess: (operation) => {
+      void queryClient.invalidateQueries({ queryKey: ['operations'] });
+      navigate(`/operations/${operation.id}`);
+    },
+  });
+
+  return (
+    <main className="grid two">
+      <section className="card hero-card">
+        <p className="eyebrow">Milestone 1</p>
+        <h1>Planificador tecnico de cargas</h1>
+        <p className="lede">Operaciones, camion, destinos, productos y generacion de plan en un flujo minimo usable.</p>
+      </section>
+      <section className="card">
+        <h2>Nueva operacion</h2>
+        <form
+          className="form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            createOperation.mutate({
+              code: optionalText(form, 'code'),
+              name: optionalText(form, 'name'),
+              notes: optionalText(form, 'notes'),
+              scheduledAt: optionalDate(form, 'scheduledAt'),
+            });
+          }}
+        >
+          <label>Codigo<input name="code" placeholder="OP-2026-001" /></label>
+          <label>Nombre<input name="name" placeholder="Carga obra norte" /></label>
+          <label>Programada<input name="scheduledAt" type="datetime-local" /></label>
+          <label>Notas<textarea name="notes" rows={3} /></label>
+          <button disabled={createOperation.isPending}>Crear operacion</button>
+          <MutationError error={createOperation.error} />
+        </form>
+      </section>
+      <section className="card span">
+        <SectionTitle title="Operaciones" subtitle="Listado de cargas en preparacion" />
+        <QueryState query={operations}>
+          {(items) => (
+            <div className="list">
+              {items.map((operation) => (
+                <OperationRow key={operation.id} operation={operation} />
+              ))}
+            </div>
+          )}
+        </QueryState>
+      </section>
+    </main>
+  );
+}
+
+function OperationPage({ operationId }: { operationId: string }) {
+  const operation = useOperation(operationId);
+  return (
+    <main>
+      <QueryState query={operation}>
+        {(item) => (
+          <div className="stack">
+            <OperationHeader operation={item} />
+              <section className="grid four">
+                <DashboardLink href={`/operations/${operationId}/truck`} label="Camion" value={item.truck?.plate ?? 'Sin definir'} />
+                <DashboardLink href={`/operations/${operationId}/destinations`} label="Destinos" value={String(item.destinations.length)} />
+                <DashboardLink href={`/operations/${operationId}/products`} label="Productos" value={String(item.products.length)} />
+                <DashboardLink href={`/operations/${operationId}/planner`} label="Plan" value={item.latestPlan ? `v${item.latestPlan.version}` : 'Pendiente'} />
+              </section>
+              {item.latestPlan ? <DashboardLink href={`/operations/${operationId}/report`} label="Reporte operativo" value={item.latestPlan.status} /> : null}
+            {item.latestPlan && (
+              <section className="card">
+                <SectionTitle title="Ultimo plan" subtitle={`${item.latestPlan.status} / ${item.latestPlan.method}`} />
+                <MetricGrid metrics={item.latestPlan.metrics} />
+              </section>
+            )}
+          </div>
+        )}
+      </QueryState>
+    </main>
+  );
+}
+
+function TruckPage({ operationId }: { operationId: string }) {
+  const queryClient = useQueryClient();
+  const operation = useOperation(operationId);
+  const truck = useQuery({ queryKey: ['truck', operationId], queryFn: () => trucksApi.get(operationId) });
+  const saveTruck = useMutation({
+    mutationFn: trucksApi.upsert.bind(null, operationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['truck', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+    },
+  });
+
+  return (
+    <main className="stack">
+      <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
+      <section className="card">
+        <SectionTitle title="Camion" subtitle="Dimensiones requeridas para generar plan automatico" />
+        <QueryState query={truck}>
+          {(item) => (
+            <form
+              className="form matrix"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                saveTruck.mutate({
+                  plate: requiredText(form, 'plate'),
+                  description: optionalText(form, 'description'),
+                  loadingMethod: requiredText(form, 'loadingMethod') as LoadingMethod,
+                  maxPayloadKg: optionalNumber(form, 'maxPayloadKg'),
+                  lengthMm: optionalInteger(form, 'lengthMm'),
+                  widthMm: optionalInteger(form, 'widthMm'),
+                  heightMm: optionalInteger(form, 'heightMm'),
+                });
+              }}
+            >
+              <label>Patente<input name="plate" defaultValue={item?.plate ?? ''} required /></label>
+              <label>Metodo<select name="loadingMethod" defaultValue={item?.loadingMethod ?? LoadingMethod.REAR}>{loadingMethods.map((method) => <option key={method}>{method}</option>)}</select></label>
+              <label>Payload kg<input name="maxPayloadKg" type="number" defaultValue={item?.maxPayloadKg ?? ''} /></label>
+              <label>Largo mm<input name="lengthMm" type="number" defaultValue={item?.lengthMm ?? ''} /></label>
+              <label>Ancho mm<input name="widthMm" type="number" defaultValue={item?.widthMm ?? ''} /></label>
+              <label>Alto mm<input name="heightMm" type="number" defaultValue={item?.heightMm ?? ''} /></label>
+              <label className="wide">Descripcion<textarea name="description" rows={3} defaultValue={item?.description ?? ''} /></label>
+              <button disabled={saveTruck.isPending}>Guardar camion</button>
+              <MutationError error={saveTruck.error} />
+            </form>
+          )}
+        </QueryState>
+      </section>
+    </main>
+  );
+}
+
+function DestinationsPage({ operationId }: { operationId: string }) {
+  const queryClient = useQueryClient();
+  const operation = useOperation(operationId);
+  const destinations = useQuery({ queryKey: ['destinations', operationId], queryFn: () => destinationsApi.list(operationId) });
+  const createDestination = useMutation({
+    mutationFn: destinationsApi.create.bind(null, operationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['destinations', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+    },
+  });
+  const deleteDestination = useDeleteMutation((id: string) => destinationsApi.remove(id), ['destinations', operationId], ['operation', operationId]);
+
+  return (
+    <main className="stack">
+      <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
+      <section className="grid two">
+        <div className="card">
+          <SectionTitle title="Agregar destino" subtitle="Orden de descarga obligatorio" />
+          <form className="form" onSubmit={(event) => handleDestinationSubmit(event, createDestination.mutate)}>
+            <label>Nombre<input name="name" required /></label>
+            <label>Orden<input name="unloadingOrder" type="number" min="1" required /></label>
+            <label>Codigo<input name="code" /></label>
+            <label>Direccion<input name="address" /></label>
+            <label>Notas<textarea name="notes" rows={3} /></label>
+            <button disabled={createDestination.isPending}>Agregar destino</button>
+            <MutationError error={createDestination.error} />
+          </form>
+        </div>
+        <div className="card">
+          <SectionTitle title="Destinos" subtitle="Secuencia operativa" />
+          <QueryState query={destinations}>
+            {(items) => <DestinationList items={items} onDelete={(id) => deleteDestination.mutate(id)} />}
+          </QueryState>
+          <MutationError error={deleteDestination.error} />
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function ProductsPage({ operationId }: { operationId: string }) {
+  const queryClient = useQueryClient();
+  const operation = useOperation(operationId);
+  const destinations = useQuery({ queryKey: ['destinations', operationId], queryFn: () => destinationsApi.list(operationId) });
+  const products = useQuery({ queryKey: ['products', operationId], queryFn: () => productsApi.list(operationId) });
+  const createProduct = useMutation({
+    mutationFn: productsApi.create.bind(null, operationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['products', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+    },
+  });
+  const deleteProduct = useDeleteMutation((id: string) => productsApi.remove(id), ['products', operationId], ['operation', operationId]);
+  const duplicateProduct = useDeleteMutation((id: string) => productsApi.duplicate(id), ['products', operationId], ['operation', operationId]);
+
+  return (
+    <main className="stack">
+      <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
+      <section className="grid two">
+        <div className="card">
+          <SectionTitle title="Agregar producto" subtitle="Bulto, peso y huella para el planner" />
+          <QueryState query={destinations}>
+            {(destinationItems) => (
+              <form className="form matrix" onSubmit={(event) => handleProductSubmit(event, createProduct.mutate)}>
+                <label>Codigo<input name="code" required /></label>
+                <label>Familia<select name="family" defaultValue={ProductFamily.SHEET}>{productFamilies.map((family) => <option key={family}>{family}</option>)}</select></label>
+                <label>Destino<select name="destinationId"><option value="">Sin destino</option>{destinationItems.map((destination) => <option key={destination.id} value={destination.id}>{destination.name}</option>)}</select></label>
+                <label>Cantidad<input name="quantity" type="number" min="1" defaultValue="1" /></label>
+                <label>Peso kg<input name="weightKg" type="number" step="0.01" /></label>
+                <label>Largo mm<input name="lengthMm" type="number" /></label>
+                <label>Ancho mm<input name="widthMm" type="number" /></label>
+                <label>Alto mm<input name="heightMm" type="number" /></label>
+                <label className="check"><input name="stackable" type="checkbox" /> Apilable</label>
+                <label className="check"><input name="rotationAllowed" type="checkbox" defaultChecked /> Permite rotacion</label>
+                <label className="wide">Descripcion<textarea name="description" rows={3} /></label>
+                <button disabled={createProduct.isPending}>Agregar producto</button>
+                <MutationError error={createProduct.error} />
+              </form>
+            )}
+          </QueryState>
+        </div>
+        <div className="card">
+          <SectionTitle title="Productos" subtitle="Duplicar acelera carga repetitiva" />
+          <QueryState query={products}>
+            {(items) => <ProductList items={items} onDelete={(id) => deleteProduct.mutate(id)} onDuplicate={(id) => duplicateProduct.mutate(id)} />}
+          </QueryState>
+          <MutationError error={deleteProduct.error ?? duplicateProduct.error} />
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function PlannerPage({ operationId }: { operationId: string }) {
+  const queryClient = useQueryClient();
+  const operation = useOperation(operationId);
+  const currentPlan = useQuery({ queryKey: ['loading-plan', operationId], queryFn: () => loadingPlansApi.current(operationId) });
+  const generatePlan = useMutation({
+    mutationFn: () => loadingPlansApi.generate(operationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['loading-plan', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+    },
+  });
+  const approvePlan = useMutation({
+    mutationFn: (planId: string) => loadingPlansApi.approve(planId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['loading-plan', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+    },
+  });
+  const plan = generatePlan.data ?? currentPlan.data;
+  const criticalCount = plan?.alertCounts.critical ?? 0;
+  const isApproved = plan?.planStatus === PlanStatus.APPROVED;
+
+  return (
+    <main className="stack">
+      <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
+      <section className="card action-bar">
+        <div>
+          <h2>Planner</h2>
+          <p>Genera el plan actual con validaciones de peso, volumen, zonas y no ubicados.</p>
+        </div>
+        <div className="actions">
+          {plan ? <button className="ghost" type="button" onClick={() => navigate(`/operations/${operationId}/report`)}>Ver reporte</button> : null}
+          {plan ? <button type="button" disabled={approvePlan.isPending || criticalCount > 0 || isApproved} onClick={() => approvePlan.mutate(plan.id)}>{isApproved ? 'Plan aprobado' : approvePlan.isPending ? 'Aprobando' : 'Aprobar plan'}</button> : null}
+          <button disabled={generatePlan.isPending || isApproved} onClick={() => generatePlan.mutate()}>{isApproved ? 'Plan aprobado' : 'Generar plan'}</button>
+        </div>
+      </section>
+      <MutationError error={generatePlan.error} />
+      <MutationError error={approvePlan.error} />
+      {plan && criticalCount > 0 ? <p className="approval-blocker">Aprobacion bloqueada: el plan tiene {criticalCount} alerta(s) critica(s).</p> : null}
+      {isApproved ? <p className="approved-copy">Plan aprobado. Los ajustes manuales quedan en modo lectura.</p> : null}
+      {currentPlan.isLoading && !plan ? <EmptyState title="Cargando plan" text="Buscando plan vigente." /> : null}
+      {currentPlan.error && !plan ? <EmptyState title="Sin plan vigente" text="Genera un plan cuando camion y productos esten cargados." /> : null}
+      {plan && <PlanDetail plan={plan} operationId={operationId} truck={operation.data?.truck ?? null} />}
+    </main>
+  );
+}
+
+function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; operationId: string; truck: Truck | null }) {
+  const queryClient = useQueryClient();
+  const [currentStep, setCurrentStep] = useState(() => (plan.steps.length > 0 ? 1 : 0));
+  const [viewAll, setViewAll] = useState(false);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const adjustItem = useMutation({
+    mutationFn: ({ itemId, payload }: { itemId: string; payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2] }) =>
+      loadingPlansApi.adjustPlacedItem(plan.id, itemId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['loading-plan', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+    },
+  });
+  const sequenceByPlacedItemId = useMemo(() => new Map(plan.steps.filter((step) => step.placedItemId).map((step) => [step.placedItemId!, step.sequence])), [plan.steps]);
+  const maxStep = plan.steps.length;
+  const visibleItems = useMemo(() => {
+    if (viewAll || maxStep === 0) return plan.placedItems;
+    return plan.placedItems.filter((item) => {
+      const sequence = sequenceByPlacedItemId.get(item.id);
+      return sequence !== undefined && sequence <= currentStep;
+    });
+  }, [currentStep, maxStep, plan.placedItems, sequenceByPlacedItemId, viewAll]);
+  const selectedItem = plan.placedItems.find((item) => item.id === selectedItemId) ?? visibleItems.at(-1) ?? null;
+  const activeStep = plan.steps.find((step) => step.sequence === currentStep) ?? null;
+  const alertsByPlacedItemId = useMemo(() => buildAlertsByPlacedItemId(plan.alerts), [plan.alerts]);
+  const itemStatusByPlacedItemId = useMemo(() => buildItemStatusByPlacedItemId(alertsByPlacedItemId), [alertsByPlacedItemId]);
+  const selectedItemAlerts = selectedItem ? (alertsByPlacedItemId.get(selectedItem.id) ?? []) : [];
+  const criticalAlerts = plan.alerts.filter((alert) => alert.severity === 'CRITICAL');
+  const placedItemLabelById = useMemo(() => new Map(plan.placedItems.map((item) => [item.id, `${item.productCode} #${item.unitIndex}`])), [plan.placedItems]);
+
+  useEffect(() => {
+    setCurrentStep(plan.steps.length > 0 ? 1 : 0);
+    setViewAll(false);
+    setSelectedItemId(null);
+  }, [plan.id, plan.steps.length]);
+
+  return (
+    <div className="stack">
+      <section className="card">
+        <SectionTitle title={`Plan v${plan.version}`} subtitle={`${plan.planStatus} / ${plan.loadingMethod} / ${plan.isCurrent ? 'actual' : 'historico'}`} />
+        <MetricGrid metrics={plan.metrics} />
+      </section>
+      <section className="card simulation-card">
+        <SectionTitle title="Simulacion 3D de carga" subtitle="Secuencia operativa con altura real y posicion Z" />
+        {criticalAlerts.length > 0 ? <PlanCriticalBanner count={criticalAlerts.length} /> : null}
+        <div className="simulation-layout">
+          <PlannerScene items={visibleItems} selectedItemId={selectedItem?.id ?? null} sequenceByPlacedItemId={sequenceByPlacedItemId} itemStatusByPlacedItemId={itemStatusByPlacedItemId} truck={truck} onSelect={setSelectedItemId} />
+          <div className="simulation-side">
+            <StepControls currentStep={currentStep} maxStep={maxStep} viewAll={viewAll} onPrevious={() => setCurrentStep((step) => Math.max(1, step - 1))} onNext={() => setCurrentStep((step) => Math.min(maxStep, step + 1))} onReset={() => { setCurrentStep(maxStep > 0 ? 1 : 0); setViewAll(false); }} onToggleViewAll={() => setViewAll((value) => !value)} />
+            <StepInstructionPanel step={activeStep} maxStep={maxStep} viewAll={viewAll} visibleCount={visibleItems.length} criticalCount={criticalAlerts.length} />
+            <SelectedItemPanel item={selectedItem} sequence={selectedItem ? sequenceByPlacedItemId.get(selectedItem.id) : undefined} alerts={selectedItemAlerts} readOnly={plan.planStatus === PlanStatus.APPROVED} isSaving={adjustItem.isPending} error={adjustItem.error} onSave={(itemId, payload) => adjustItem.mutate({ itemId, payload })} />
+          </div>
+        </div>
+      </section>
+      <section className="grid two wide-left">
+        <div className="card">
+          <SectionTitle title="Vista superior" subtitle="Plano tecnico simplificado" />
+          <TruckCanvas items={plan.placedItems} truck={truck} itemStatusByPlacedItemId={itemStatusByPlacedItemId} />
+        </div>
+        <div className="card">
+          <SectionTitle title="Alertas" subtitle={`${plan.alertCounts.critical} criticas / ${plan.alertCounts.warning} warnings`} />
+          {criticalAlerts.length > 0 ? <p className="approval-blocker">Plan con errores criticos: corregir antes de aprobar.</p> : null}
+          {plan.alerts.length === 0 ? <p className="muted">Sin alertas.</p> : <div className="list compact">{plan.alerts.map((alert) => <div className={`alert ${alert.severity.toLowerCase()}`} key={alert.id}><strong>{alert.severity}{alert.placedItemId ? ` / ${placedItemLabelById.get(alert.placedItemId) ?? 'bulto'}` : ''}</strong><span>{alert.message}</span></div>)}</div>}
+        </div>
+      </section>
+      <section className="grid two">
+        <DataTable title="Ubicados" headers={['Producto', 'Destino', 'X/Y/Z', 'L/A/H']} rows={plan.placedItems.map((item) => [item.productCode, item.destinationName ?? '-', `${item.xMm}/${item.yMm}/${item.zMm}`, `${item.lengthMm}/${item.widthMm}/${item.heightMm}`])} />
+        <DataTable title="No ubicados" headers={['Producto', 'Destino', 'Motivo']} rows={plan.unplacedItems.map((item) => [item.productCode, item.destinationName ?? '-', item.message])} />
+      </section>
+    </div>
+  );
+}
+
+function ReportPage({ operationId }: { operationId: string }) {
+  const currentPlan = useQuery({ queryKey: ['loading-plan', operationId], queryFn: () => loadingPlansApi.current(operationId) });
+  const planId = currentPlan.data?.id;
+  const report = useQuery({
+    queryKey: ['loading-plan-report', planId],
+    queryFn: () => loadingPlansApi.report(planId!),
+    enabled: Boolean(planId),
+  });
+
+  return (
+    <main className="report-shell">
+      <QueryState query={currentPlan}>
+        {(plan) => {
+          if (!plan) return <EmptyState title="Sin plan vigente" text="Genera un plan antes de imprimir el reporte operativo." />;
+          return (
+            <QueryState query={report}>
+              {(item) => <OperationalReport report={item} />}
+            </QueryState>
+          );
+        }}
+      </QueryState>
+    </main>
+  );
+}
+
+function OperationalReport({ report }: { report: Awaited<ReturnType<typeof loadingPlansApi.report>> }) {
+  const { operation, truck, destinations, products, plan } = report;
+  const nonCriticalAlerts = plan.alerts.filter((alert) => alert.severity !== 'CRITICAL');
+  const approvalDate = plan.approvedAt ?? (plan.planStatus === PlanStatus.APPROVED ? plan.updatedAt : null);
+  const productRows = products.map((product) => [product.code, product.destinationName ?? '-', product.family, String(product.quantity), formatNumber(product.weightKg, 'kg')]);
+  const stepRows = plan.steps.map((step) => [String(step.sequence), step.title, step.instructions ?? '-']);
+  const placedRows = plan.placedItems.map((item) => [item.productCode, item.destinationName ?? '-', `${item.xMm}/${item.yMm}/${item.zMm}`, `${item.lengthMm}/${item.widthMm}/${item.heightMm}`, item.zoneType ?? '-']);
+
+  return (
+    <article className="print-report">
+      <div className="report-actions no-print">
+        <button className="ghost" type="button" onClick={() => navigate(`/operations/${operation.id}/planner`)}>Volver al planner</button>
+        <button type="button" onClick={() => window.print()}>Imprimir reporte</button>
+      </div>
+      <header className="report-header">
+        <div>
+          <p className="eyebrow">Reporte operativo de carga</p>
+          <h1>{operation.code}</h1>
+          <p>{operation.name ?? 'Operacion sin nombre'}{operation.scheduledAt ? ` / ${formatDate(operation.scheduledAt)}` : ''}</p>
+        </div>
+        <div className="report-stamp">
+          <span>{plan.planStatus}</span>
+          <strong>{approvalDate ? formatDate(approvalDate) : 'Pendiente de aprobacion'}</strong>
+        </div>
+      </header>
+      <section className="report-grid">
+        <ReportBlock title="Camion" rows={[
+          ['Patente', truck?.plate ?? '-'],
+          ['Metodo', truck?.loadingMethod ?? plan.loadingMethod],
+          ['Payload', formatNumber(truck?.maxPayloadKg, 'kg')],
+          ['Dimensiones', truck ? `${truck.lengthMm ?? '-'} x ${truck.widthMm ?? '-'} x ${truck.heightMm ?? '-'} mm` : '-'],
+        ]} />
+        <ReportBlock title="Metricas" rows={[
+          ['Peso total', formatNumber(plan.metrics?.totalWeightKg, 'kg')],
+          ['Peso ubicado', formatNumber(plan.metrics?.placedWeightKg, 'kg')],
+          ['Volumen usado', formatNumber(plan.metrics?.usedVolumeM3, 'm3')],
+          ['Utilizacion', formatNumber(plan.metrics?.volumeUtilizationPct, '%')],
+          ['Centro gravedad', `${formatNumber(plan.metrics?.centerOfGravityX, 'mm')} / ${formatNumber(plan.metrics?.centerOfGravityY, 'mm')} / ${formatNumber(plan.metrics?.centerOfGravityZ, 'mm')}`],
+        ]} />
+      </section>
+      <section className="report-section">
+        <h2>Destinos y orden de descarga</h2>
+        <ReportTable headers={['Orden', 'Destino', 'Codigo', 'Direccion']} rows={destinations.map((destination) => [String(destination.unloadingOrder), destination.name, destination.code ?? '-', destination.address ?? '-'])} />
+      </section>
+      <section className="report-section">
+        <h2>Resumen de productos</h2>
+        <ReportTable headers={['Producto', 'Destino', 'Familia', 'Cantidad', 'Peso unitario']} rows={productRows} />
+      </section>
+      <section className="report-section">
+        <h2>Secuencia de carga</h2>
+        <ReportTable headers={['Paso', 'Accion', 'Instruccion']} rows={stepRows} />
+      </section>
+      <section className="report-section">
+        <h2>Plano superior simplificado</h2>
+        <TruckCanvas items={plan.placedItems} truck={truck} itemStatusByPlacedItemId={buildItemStatusByPlacedItemId(buildAlertsByPlacedItemId(plan.alerts))} />
+        <ReportTable headers={['Producto', 'Destino', 'X/Y/Z', 'L/A/H', 'Zona']} rows={placedRows} />
+      </section>
+      <section className="report-section">
+        <h2>Alertas no criticas</h2>
+        {nonCriticalAlerts.length === 0 ? <p>Sin alertas no criticas.</p> : <ReportTable headers={['Severidad', 'Tipo', 'Mensaje']} rows={nonCriticalAlerts.map((alert) => [alert.severity, alert.type, alert.message])} />}
+      </section>
+      {operation.notes ? <section className="report-section"><h2>Notas</h2><p>{operation.notes}</p></section> : null}
+    </article>
+  );
+}
+
+function ReportBlock({ title, rows }: { title: string; rows: string[][] }) {
+  return <section className="report-block"><h2>{title}</h2>{rows.map(([label, value]) => <div className="report-row" key={label}><span>{label}</span><strong>{value}</strong></div>)}</section>;
+}
+
+function ReportTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+  return <div className="report-table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={`${index}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody></table></div>;
+}
+
+type ItemAlertStatus = 'critical' | 'warning' | undefined;
+
+function PlannerScene({ items, selectedItemId, sequenceByPlacedItemId, itemStatusByPlacedItemId, truck, onSelect }: { items: PlacedItem[]; selectedItemId: string | null; sequenceByPlacedItemId: Map<string, number>; itemStatusByPlacedItemId: Map<string, ItemAlertStatus>; truck: Truck | null; onSelect: (id: string) => void }) {
+  const dimensions = useMemo(() => truckDimensions(items, truck), [items, truck]);
+  const scale = 14 / Math.max(dimensions.lengthMm, dimensions.widthMm, dimensions.heightMm, 1);
+
+  return (
+    <div className="planner-scene">
+      <Canvas camera={{ position: [7.5, 5.2, 8], fov: 36 }} shadows>
+        <color attach="background" args={["#15120e"]} />
+        <ambientLight intensity={0.72} />
+        <directionalLight position={[6, 9, 5]} intensity={1.35} castShadow />
+        <TruckFrame dimensions={dimensions} scale={scale} />
+        {items.map((item) => (
+          <PlacedItemBox key={item.id} item={item} sequence={sequenceByPlacedItemId.get(item.id)} alertStatus={itemStatusByPlacedItemId.get(item.id)} scale={scale} truckLengthMm={dimensions.lengthMm} truckWidthMm={dimensions.widthMm} selected={item.id === selectedItemId} onSelect={onSelect} />
+        ))}
+        <OrbitControls
+          makeDefault
+          enablePan
+          enableDamping
+          zoomToCursor
+          panSpeed={0.85}
+          zoomSpeed={0.85}
+          minDistance={5}
+          maxDistance={26}
+          maxPolarAngle={Math.PI / 2.05}
+          target={[0, 1.2, 0]}
+        />
+      </Canvas>
+      <div className="scene-hint">Orbitar / zoom / seleccionar bulto</div>
+    </div>
+  );
+}
+
+function TruckFrame({ dimensions, scale }: { dimensions: { lengthMm: number; widthMm: number; heightMm: number }; scale: number }) {
+  const length = dimensions.lengthMm * scale;
+  const width = dimensions.widthMm * scale;
+  const height = dimensions.heightMm * scale;
+  const zoneLength = length / 3;
+
+  return (
+    <group>
+      <mesh receiveShadow position={[0, -0.015, 0]}>
+        <boxGeometry args={[length, 0.03, width]} />
+        <meshStandardMaterial color="#332b22" roughness={0.88} metalness={0.2} />
+        <Edges color="#ffbf73" />
+      </mesh>
+      <mesh position={[0, height / 2, -width / 2]}><boxGeometry args={[length, height, 0.035]} /><meshBasicMaterial color="#ffbf73" transparent opacity={0.12} /></mesh>
+      <mesh position={[0, height / 2, width / 2]}><boxGeometry args={[length, height, 0.035]} /><meshBasicMaterial color="#ffbf73" transparent opacity={0.12} /></mesh>
+      <mesh position={[length / 2, height / 2, 0]}><boxGeometry args={[0.035, height, width]} /><meshBasicMaterial color="#ffbf73" transparent opacity={0.14} /></mesh>
+      <gridHelper args={[Math.max(length, width), 12, '#6b5b47', '#2b241c']} position={[0, 0.01, 0]} />
+      {[-length / 2 + zoneLength, -length / 2 + zoneLength * 2].map((x) => <mesh key={x} position={[x, 0.025, 0]}><boxGeometry args={[0.025, 0.05, width]} /><meshBasicMaterial color="#866a47" /></mesh>)}
+      <mesh position={[-length / 2 - 0.18, height / 2, 0]}><boxGeometry args={[0.08, height, width]} /><meshBasicMaterial color="#77522d" transparent opacity={0.35} /></mesh>
+      <Text position={[-length / 2 + 0.8, 0.08, -width / 2 - 0.35]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.22} color="#ffcf8f">CABINA</Text>
+      <Text position={[length / 2 - 0.8, 0.08, width / 2 + 0.35]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.22} color="#ffcf8f">PUERTAS</Text>
+    </group>
+  );
+}
+
+function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truckWidthMm, selected, onSelect }: { item: PlacedItem; sequence?: number; alertStatus: ItemAlertStatus; scale: number; truckLengthMm: number; truckWidthMm: number; selected: boolean; onSelect: (id: string) => void }) {
+  const length = item.lengthMm * scale;
+  const width = item.widthMm * scale;
+  const height = Math.max(item.heightMm * scale, 0.08);
+  const x = (item.xMm + item.lengthMm / 2 - truckLengthMm / 2) * scale;
+  const y = (item.zMm + item.heightMm / 2) * scale;
+  const z = (item.yMm + item.widthMm / 2 - truckWidthMm / 2) * scale;
+  const color = alertStatus === 'critical' ? '#ff1f1f' : alertStatus === 'warning' ? '#ffbf3f' : selected ? '#ffe08a' : item.manuallyAdjusted ? '#41d6c3' : familyColor(item.productFamily);
+  const edgeColor = alertStatus === 'critical' ? '#ffffff' : item.locked ? '#ffffff' : selected ? '#ffffff' : '#2c1b0b';
+
+  return (
+    <group position={[x, y, z]} onClick={(event) => { event.stopPropagation(); onSelect(item.id); }}>
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[length, height, width]} />
+        <meshStandardMaterial color={color} emissive={alertStatus === 'critical' ? '#7a0000' : '#000000'} roughness={0.58} metalness={0.28} />
+        <Edges color={edgeColor} />
+      </mesh>
+      {alertStatus === 'critical' ? <Text position={[0, height / 2 + 0.42, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.24} color="#ffffff">INVALIDO</Text> : null}
+      {alertStatus === 'warning' ? <Text position={[0, height / 2 + 0.32, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.2} color="#2b1700">WARNING</Text> : null}
+      {sequence ? <Text position={[0, height / 2 + 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={Math.max(0.18, Math.min(length, width) / 4)} color="#19110a">#{sequence}</Text> : null}
+      {item.locked ? <Text position={[0, height / 2 + 0.34, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.18} color="#ffffff">LOCK</Text> : null}
+    </group>
+  );
+}
+
+function StepControls({ currentStep, maxStep, viewAll, onPrevious, onNext, onReset, onToggleViewAll }: { currentStep: number; maxStep: number; viewAll: boolean; onPrevious: () => void; onNext: () => void; onReset: () => void; onToggleViewAll: () => void }) {
+  return (
+    <div className="step-controls">
+      <div><span>Paso</span><strong>{maxStep === 0 ? 'Sin secuencia' : `${currentStep}/${maxStep}`}</strong></div>
+      <button type="button" onClick={onPrevious} disabled={viewAll || currentStep <= 1}>Anterior</button>
+      <button type="button" onClick={onNext} disabled={viewAll || currentStep >= maxStep}>Siguiente</button>
+      <button type="button" onClick={onReset}>Reset</button>
+      <button type="button" className={viewAll ? 'active' : ''} onClick={onToggleViewAll}>Ver todo</button>
+    </div>
+  );
+}
+
+function StepInstructionPanel({ step, maxStep, viewAll, visibleCount, criticalCount }: { step: LoadingPlan['steps'][number] | null; maxStep: number; viewAll: boolean; visibleCount: number; criticalCount: number }) {
+  if (maxStep === 0) return <div className="instruction-panel"><strong>Sin pasos del backend</strong><p>Se muestra la carga completa porque este plan no trae secuencia operativa.</p></div>;
+  return <div className={`instruction-panel${criticalCount > 0 ? ' has-critical' : ''}`}><span>{viewAll ? 'Vista consolidada' : `Paso ${step?.sequence ?? '-'}`}</span><strong>{viewAll ? `${visibleCount} bultos ubicados` : (step?.title ?? 'Paso no encontrado')}</strong>{criticalCount > 0 ? <p className="danger-copy">Plan invalido: hay {criticalCount} alerta(s) critica(s). No aprobar hasta corregirlas.</p> : null}<p>{viewAll ? 'Todos los bultos del plan estan visibles para auditoria.' : (step?.instructions ?? 'Sin instruccion registrada.')}</p></div>;
+}
+
+function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, onSave }: { item: PlacedItem | null; sequence?: number; alerts: PlanAlert[]; readOnly: boolean; isSaving: boolean; error: Error | null; onSave: (itemId: string, payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2]) => void }) {
+  if (!item) return <div className="selected-panel"><strong>Seleccion de bulto</strong><p className="muted">Elegi un bloque en la escena 3D para ver posicion y dimensiones.</p></div>;
+  const criticalAlerts = alerts.filter((alert) => alert.severity === 'CRITICAL');
+  const warningAlerts = alerts.filter((alert) => alert.severity === 'WARNING');
+  const rows = [
+    ['Paso', sequence ? `#${sequence}` : '-'],
+    ['Codigo', item.productCode],
+    ['Nombre', item.productName],
+    ['Familia', item.productFamily],
+    ['Destino', item.destinationName ?? '-'],
+    ['Posicion', `x ${item.xMm} / y ${item.yMm} / z ${item.zMm} mm`],
+    ['Dimensiones', `${item.lengthMm} x ${item.widthMm} x ${item.heightMm} mm`],
+    ['Rotacion', `${item.rotationDeg} deg`],
+    ['Altura piso', item.zMm === 0 ? 'En piso (z=0)' : `Apilado z=${item.zMm} mm`],
+    ['Estado', `${item.manuallyAdjusted ? 'Manual' : 'Automatico'}${item.locked ? ' / bloqueado' : ''}`],
+  ];
+  return (
+    <div className={`selected-panel${criticalAlerts.length > 0 ? ' invalid' : warningAlerts.length > 0 ? ' warning' : ''}`}>
+      <strong>Bulto seleccionado</strong>
+      {alerts.length > 0 ? <ItemAlertBox alerts={alerts} /> : null}
+      {rows.map(([label, value]) => <div className="detail-row" key={label}><span>{label}</span><b>{value}</b></div>)}
+      {readOnly ? <p className="approved-copy">Plan aprobado: no se permiten ajustes manuales.</p> : <form
+        className="adjust-form"
+        key={item.id}
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          onSave(item.id, {
+            xMm: requiredInteger(form, 'xMm'),
+            yMm: requiredInteger(form, 'yMm'),
+            zMm: requiredInteger(form, 'zMm'),
+            rotationDeg: requiredInteger(form, 'rotationDeg'),
+            locked: form.get('locked') === 'on',
+          });
+        }}
+      >
+        <label>X mm<input name="xMm" type="number" min="0" defaultValue={item.xMm} required /></label>
+        <label>Y mm<input name="yMm" type="number" min="0" defaultValue={item.yMm} required /></label>
+        <label>Z mm<input name="zMm" type="number" min="0" defaultValue={item.zMm} required /></label>
+        <label>Rotacion<input name="rotationDeg" type="number" min="0" step="90" defaultValue={item.rotationDeg} required /></label>
+        <label className="check wide"><input name="locked" type="checkbox" defaultChecked={item.locked} /> Bloquear bulto</label>
+        <button type="submit" disabled={isSaving}>{isSaving ? 'Guardando' : 'Guardar ajuste'}</button>
+        <MutationError error={error} />
+      </form>}
+    </div>
+  );
+}
+
+function PlanCriticalBanner({ count }: { count: number }) {
+  return <div className="critical-banner"><strong>Plan invalido</strong><span>{count} alerta(s) critica(s). Se puede guardar el ajuste manual, pero no debe aprobarse hasta corregir fuera de camion o solapes.</span></div>;
+}
+
+function ItemAlertBox({ alerts }: { alerts: PlanAlert[] }) {
+  const headline = itemAlertHeadline(alerts);
+  return <div className={`item-alert-box ${alerts.some((alert) => alert.severity === 'CRITICAL') ? 'critical' : 'warning'}`}><strong>{headline}</strong>{alerts.map((alert) => <span key={alert.id}>{alert.message}</span>)}</div>;
+}
+
+function truckDimensions(items: PlacedItem[], truck: Truck | null) {
+  const usedLength = Math.max(1000, ...items.map((item) => item.xMm + item.lengthMm));
+  const usedWidth = Math.max(1000, ...items.map((item) => item.yMm + item.widthMm));
+  const usedHeight = Math.max(1000, ...items.map((item) => item.zMm + item.heightMm));
+  return {
+    lengthMm: truck?.lengthMm ?? usedLength,
+    widthMm: truck?.widthMm ?? usedWidth,
+    heightMm: truck?.heightMm ?? usedHeight,
+  };
+}
+
+function familyColor(family: ProductFamily) {
+  const colors: Record<ProductFamily, string> = {
+    [ProductFamily.COIL]: '#8fb9a8',
+    [ProductFamily.SHEET]: '#d95f2f',
+    [ProductFamily.PROFILE]: '#ffb45f',
+    [ProductFamily.TUBE]: '#8aa8d8',
+    [ProductFamily.BAR]: '#d7c47a',
+    [ProductFamily.GENERIC_PACKAGE]: '#c9b99f',
+  };
+  return colors[family] ?? '#ffb45f';
+}
+
+function TruckCanvas({ items, truck, itemStatusByPlacedItemId }: { items: PlacedItem[]; truck: Truck | null; itemStatusByPlacedItemId: Map<string, ItemAlertStatus> }) {
+  const bounds = useMemo(() => {
+    const maxX = truck?.lengthMm ?? Math.max(1000, ...items.map((item) => item.xMm + item.lengthMm));
+    const maxY = truck?.widthMm ?? Math.max(1000, ...items.map((item) => item.yMm + item.widthMm));
+    return { maxX, maxY };
+  }, [items, truck]);
+
+  return (
+    <div className="truck-map">
+      <div className="axis cabin">Cabina</div>
+      {items.map((item) => (
+        <div
+          className={`placed${item.manuallyAdjusted ? ' manual' : ''}${item.locked ? ' locked' : ''}${itemStatusByPlacedItemId.get(item.id) ? ` ${itemStatusByPlacedItemId.get(item.id)}` : ''}`}
+          key={item.id}
+          style={{
+            left: `${(item.xMm / bounds.maxX) * 100}%`,
+            top: `${(item.yMm / bounds.maxY) * 100}%`,
+            width: `${Math.max(4, (item.lengthMm / bounds.maxX) * 100)}%`,
+            height: `${Math.max(8, (item.widthMm / bounds.maxY) * 100)}%`,
+          }}
+          title={`${item.productCode} ${item.lengthMm}x${item.widthMm}${item.locked ? ' bloqueado' : ''}`}
+        >
+          {item.productCode}
+        </div>
+      ))}
+      <div className="axis doors">Puertas</div>
+    </div>
+  );
+}
+
+function buildAlertsByPlacedItemId(alerts: PlanAlert[]) {
+  const byPlacedItemId = new Map<string, PlanAlert[]>();
+  for (const alert of alerts) {
+    if (!alert.placedItemId) continue;
+    const itemAlerts = byPlacedItemId.get(alert.placedItemId) ?? [];
+    itemAlerts.push(alert);
+    byPlacedItemId.set(alert.placedItemId, itemAlerts);
+  }
+  return byPlacedItemId;
+}
+
+function buildItemStatusByPlacedItemId(alertsByPlacedItemId: Map<string, PlanAlert[]>) {
+  const statuses = new Map<string, ItemAlertStatus>();
+  for (const [placedItemId, alerts] of alertsByPlacedItemId) {
+    if (alerts.some((alert) => alert.severity === 'CRITICAL')) statuses.set(placedItemId, 'critical');
+    else if (alerts.some((alert) => alert.severity === 'WARNING')) statuses.set(placedItemId, 'warning');
+  }
+  return statuses;
+}
+
+function itemAlertHeadline(alerts: PlanAlert[]) {
+  if (alerts.some((alert) => alert.type === 'OUT_OF_BOUNDS')) return 'Ubicacion invalida: fuera del camion';
+  if (alerts.some((alert) => alert.type === 'OVERLAP')) return 'Ubicacion invalida: solapada con otro bulto';
+  if (alerts.some((alert) => alert.severity === 'CRITICAL')) return 'Ubicacion invalida';
+  return 'Advertencia del bulto';
+}
+
+function OperationHeader({ operation }: { operation: OperationDetail }) {
+  const currentRoute = parseRoute(window.location.pathname).name;
+  const basePath = `/operations/${operation.id}`;
+  const links = [
+    ['operation', 'Resumen', basePath],
+    ['truck', 'Camion', `${basePath}/truck`],
+    ['destinations', 'Destinos', `${basePath}/destinations`],
+    ['products', 'Productos', `${basePath}/products`],
+    ['planner', 'Planner', `${basePath}/planner`],
+    ['report', 'Reporte', `${basePath}/report`],
+  ] as const;
+
+  return (
+    <section className="card operation-head">
+      <div className="operation-head-top">
+        <button className="back" type="button" onClick={() => navigate('/operations')}>← Operaciones</button>
+        <nav className="operation-nav" aria-label="Navegacion de operacion">
+          {links.map(([routeName, label, href]) => (
+            <button className={currentRoute === routeName ? 'active' : ''} key={routeName} type="button" onClick={() => navigate(href)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+      </div>
+      <div className="operation-title-block">
+        <p className="eyebrow">{operation.status}</p>
+        <h1>{operation.code}</h1>
+        <p className="lede">{operation.name ?? 'Operacion sin nombre'}{operation.scheduledAt ? ` / ${formatDate(operation.scheduledAt)}` : ''}</p>
+      </div>
+    </section>
+  );
+}
+
+function OperationRow({ operation }: { operation: OperationSummary }) {
+  return (
+    <button className="row" type="button" onClick={() => navigate(`/operations/${operation.id}`)}>
+      <span><strong>{operation.code}</strong><small>{operation.name ?? 'Sin nombre'} / {operation.status}</small></span>
+      <span className="chips"><i>{operation.counts?.destinations ?? 0} destinos</i><i>{operation.counts?.products ?? 0} productos</i><i>{operation.counts?.plans ?? 0} planes</i></span>
+    </button>
+  );
+}
+
+function DashboardLink({ href, label, value }: { href: string; label: string; value: string }) {
+  return <button className="dash" type="button" onClick={() => navigate(href)}><span>{label}</span><strong>{value}</strong></button>;
+}
+
+function DestinationList({ items, onDelete }: { items: Destination[]; onDelete: (id: string) => void }) {
+  if (items.length === 0) return <p className="muted">Sin destinos cargados.</p>;
+  return <div className="list compact">{items.map((item) => <div className="item" key={item.id}><span><strong>#{item.unloadingOrder} {item.name}</strong><small>{item.code ?? 'Sin codigo'} {item.address ? `/ ${item.address}` : ''}</small></span><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></div>)}</div>;
+}
+
+function ProductList({ items, onDelete, onDuplicate }: { items: Product[]; onDelete: (id: string) => void; onDuplicate: (id: string) => void }) {
+  if (items.length === 0) return <p className="muted">Sin productos cargados.</p>;
+  return <div className="list compact">{items.map((item) => <div className="item" key={item.id}><span><strong>{item.code}</strong><small>{item.family} / qty {item.quantity} / {item.weightKg ?? 0} kg / {item.stackable ? 'apilable' : 'no apilable'} / {item.rotationAllowed ? 'rota' : 'fijo'}</small></span><span className="actions"><button className="ghost" onClick={() => onDuplicate(item.id)}>Duplicar</button><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></span></div>)}</div>;
+}
+
+function MetricGrid({ metrics }: { metrics: LoadingPlan['metrics'] }) {
+  const values = [
+    ['Peso total', formatNumber(metrics?.totalWeightKg, 'kg')],
+    ['Peso ubicado', formatNumber(metrics?.placedWeightKg, 'kg')],
+    ['Volumen usado', formatNumber(metrics?.usedVolumeM3, 'm3')],
+    ['Utilizacion', formatNumber(metrics?.volumeUtilizationPct, '%')],
+    ['Ubicados', String(metrics?.placedItemCount ?? 0)],
+    ['No ubicados', String(metrics?.unplacedItemCount ?? 0)],
+  ];
+  return <div className="metrics">{values.map(([label, value]) => <div className="metric" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>;
+}
+
+function DataTable({ title, headers, rows }: { title: string; headers: string[]; rows: string[][] }) {
+  return <div className="card"><SectionTitle title={title} subtitle={`${rows.length} registros`} /><div className="table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${title}-${index}`}>{row.map((cell, cellIndex) => <td key={`${title}-${index}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody></table></div></div>;
+}
+
+function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
+  return <div className="section-title"><h2>{title}</h2><p>{subtitle}</p></div>;
+}
+
+function EmptyState({ title, text }: { title: string; text: string }) {
+  return <section className="card empty"><h2>{title}</h2><p>{text}</p></section>;
+}
+
+function QueryState<T>({ query, children }: { query: { data?: T; isLoading: boolean; error: Error | null }; children: (data: T) => React.ReactNode }) {
+  if (query.isLoading) return <EmptyState title="Cargando" text="Consultando API local." />;
+  if (query.error) return <EmptyState title="Error" text={query.error.message} />;
+  if (query.data === undefined) return <EmptyState title="Sin datos" text="La API no devolvio contenido." />;
+  return <>{children(query.data)}</>;
+}
+
+function MutationError({ error }: { error: Error | null }) {
+  return error ? <p className="error">{error.message}</p> : null;
+}
+
+function useOperation(operationId: string) {
+  return useQuery({ queryKey: ['operation', operationId], queryFn: () => operationsApi.get(operationId) });
+}
+
+function useDeleteMutation<T>(mutationFn: (id: string) => Promise<T>, ...queryKeys: unknown[][]) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      queryKeys.forEach((queryKey) => void queryClient.invalidateQueries({ queryKey }));
+    },
+  });
+}
+
+function handleDestinationSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof destinationsApi.create>[1]) => void) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  submit({
+    name: requiredText(form, 'name'),
+    unloadingOrder: requiredInteger(form, 'unloadingOrder'),
+    code: optionalText(form, 'code'),
+    address: optionalText(form, 'address'),
+    notes: optionalText(form, 'notes'),
+  });
+  event.currentTarget.reset();
+}
+
+function handleProductSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof productsApi.create>[1]) => void) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  submit({
+    destinationId: optionalText(form, 'destinationId'),
+    code: requiredText(form, 'code'),
+    family: requiredText(form, 'family') as ProductFamily,
+    description: optionalText(form, 'description'),
+    quantity: optionalInteger(form, 'quantity'),
+    weightKg: optionalNumber(form, 'weightKg'),
+    lengthMm: optionalInteger(form, 'lengthMm'),
+    widthMm: optionalInteger(form, 'widthMm'),
+    heightMm: optionalInteger(form, 'heightMm'),
+    stackable: form.get('stackable') === 'on',
+    rotationAllowed: form.get('rotationAllowed') === 'on',
+  });
+  event.currentTarget.reset();
+}
+
+function requiredText(form: FormData, key: string) {
+  const value = form.get(key)?.toString().trim();
+  if (!value) throw new Error(`${key} es requerido`);
+  return value;
+}
+
+function optionalText(form: FormData, key: string) {
+  const value = form.get(key)?.toString().trim();
+  return value ? value : undefined;
+}
+
+function requiredInteger(form: FormData, key: string) {
+  return Number.parseInt(requiredText(form, key), 10);
+}
+
+function optionalInteger(form: FormData, key: string) {
+  const value = optionalText(form, key);
+  return value ? Number.parseInt(value, 10) : undefined;
+}
+
+function optionalNumber(form: FormData, key: string) {
+  const value = optionalText(form, key);
+  return value ? Number(value) : undefined;
+}
+
+function optionalDate(form: FormData, key: string) {
+  const value = optionalText(form, key);
+  return value ? new Date(value).toISOString() : undefined;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+}
+
+function formatNumber(value: number | string | null | undefined, suffix: string) {
+  if (value === undefined || value === null) return '-';
+  const numericValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numericValue) ? `${numericValue.toFixed(2)} ${suffix}` : '-';
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  </StrictMode>,
+);

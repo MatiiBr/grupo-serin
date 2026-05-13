@@ -1,0 +1,43 @@
+{
+  "name": "@camiones/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch -r ts-node/register -r tsconfig-paths/register src/main.ts",
+    "start": "node dist/main.js",
+    "test": "vitest run src/domain/**/*.spec.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "seed:demo": "ts-node -r tsconfig-paths/register prisma/seed.ts",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@nestjs/common": "latest",
+    "@nestjs/config": "latest",
+    "@nestjs/core": "latest",
+    "@nestjs/platform-express": "latest",
+    "@nestjs/swagger": "latest",
+    "@prisma/client": "^6.19.3",
+    "class-transformer": "latest",
+    "class-validator": "latest",
+    "reflect-metadata": "latest",
+    "rxjs": "latest"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "latest",
+    "@nestjs/schematics": "latest",
+    "@nestjs/testing": "latest",
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "eslint": "latest",
+    "prisma": "^6.19.3",
+    "source-map-support": "latest",
+    "ts-loader": "latest",
+    "ts-node": "latest",
+    "tsconfig-paths": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vitest": "^4.1.6"
+  }
+}

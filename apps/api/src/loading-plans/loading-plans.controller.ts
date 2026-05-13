@@ -1,0 +1,50 @@
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
+import { LoadingPlansService } from './loading-plans.service';
+
+@ApiTags('loading-plans')
+@Controller()
+export class LoadingPlansController {
+  constructor(private readonly loadingPlansService: LoadingPlansService) {}
+
+  @Post('operations/:operationId/loading-plans/generate')
+  @ApiCreatedResponse({ description: 'Generates and persists a loading plan for an operation.' })
+  generate(@Param('operationId', ParseUUIDPipe) operationId: string) {
+    return this.loadingPlansService.generate(operationId);
+  }
+
+  @Get('operations/:operationId/loading-plans/current')
+  @ApiOkResponse({ description: 'Returns the current loading plan for an operation.' })
+  findCurrent(@Param('operationId', ParseUUIDPipe) operationId: string) {
+    return this.loadingPlansService.findCurrent(operationId);
+  }
+
+  @Get('loading-plans/:id')
+  @ApiOkResponse({ description: 'Returns a loading plan by id.' })
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.loadingPlansService.findOne(id);
+  }
+
+  @Post('loading-plans/:planId/approve')
+  @ApiOkResponse({ description: 'Approves a valid loading plan and its parent operation.' })
+  approve(@Param('planId', ParseUUIDPipe) planId: string) {
+    return this.loadingPlansService.approve(planId);
+  }
+
+  @Get('loading-plans/:planId/report')
+  @ApiOkResponse({ description: 'Returns printable operational report data for a loading plan.' })
+  report(@Param('planId', ParseUUIDPipe) planId: string) {
+    return this.loadingPlansService.report(planId);
+  }
+
+  @Patch('loading-plans/:planId/placed-items/:placedItemId')
+  @ApiOkResponse({ description: 'Manually adjusts a placed item and recalculates plan validation.' })
+  updatePlacedItem(
+    @Param('planId', ParseUUIDPipe) planId: string,
+    @Param('placedItemId', ParseUUIDPipe) placedItemId: string,
+    @Body() dto: UpdatePlacedItemDto,
+  ) {
+    return this.loadingPlansService.updatePlacedItem(planId, placedItemId, dto);
+  }
+}

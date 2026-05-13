@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: camiones-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: camiones
+    ports:
+      - "55432:5432"
+    volumes:
+      - camiones-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d camiones"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  camiones-postgres-data:

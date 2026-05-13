@@ -1,0 +1,337 @@
+import type { LoadingMethod, OperationStatus, PlanStatus, ProductFamily, TruckZoneType } from '@camiones/shared';
+
+export interface OperationSummary {
+  id: string;
+  code: string;
+  status: OperationStatus;
+  name: string | null;
+  notes: string | null;
+  scheduledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  counts?: {
+    destinations: number;
+    products: number;
+    plans: number;
+  };
+}
+
+export interface CreateOperationPayload {
+  code?: string;
+  name?: string;
+  notes?: string;
+  scheduledAt?: string;
+}
+
+export interface TruckZone {
+  id: string;
+  type: TruckZoneType;
+  maxWeightKg?: number;
+  startXMm?: number;
+  endXMm?: number;
+  startYMm?: number;
+  endYMm?: number;
+}
+
+export interface Truck {
+  id: string;
+  operationId: string;
+  plate: string;
+  description: string | null;
+  loadingMethod: LoadingMethod;
+  maxPayloadKg?: number;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  zones?: TruckZone[];
+}
+
+export interface UpsertTruckPayload {
+  plate: string;
+  description?: string;
+  loadingMethod?: LoadingMethod;
+  maxPayloadKg?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+}
+
+export interface Destination {
+  id: string;
+  operationId: string;
+  code: string | null;
+  name: string;
+  unloadingOrder: number;
+  address: string | null;
+  notes: string | null;
+}
+
+export interface DestinationPayload {
+  code?: string;
+  name: string;
+  unloadingOrder: number;
+  address?: string;
+  notes?: string;
+}
+
+export interface Product {
+  id: string;
+  operationId: string;
+  destinationId: string | null;
+  code: string;
+  family: ProductFamily;
+  description: string | null;
+  quantity: number;
+  weightKg?: number;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  stackable: boolean;
+  rotationAllowed: boolean;
+}
+
+export interface ProductPayload {
+  destinationId?: string;
+  code: string;
+  family: ProductFamily;
+  description?: string;
+  quantity?: number;
+  weightKg?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  stackable?: boolean;
+  rotationAllowed?: boolean;
+}
+
+export interface ProductCatalog {
+  id: string;
+  code: string;
+  family: ProductFamily;
+  description: string | null;
+  weightKg?: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  stackable: boolean;
+  rotationAllowed: boolean;
+  isActive: boolean;
+}
+
+export interface ProductCatalogPayload {
+  code: string;
+  family: ProductFamily;
+  description?: string;
+  weightKg?: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  stackable?: boolean;
+  rotationAllowed?: boolean;
+  isActive?: boolean;
+}
+
+export interface DestinationCatalog {
+  id: string;
+  code: string | null;
+  name: string;
+  address: string | null;
+  notes: string | null;
+  isActive: boolean;
+}
+
+export interface DestinationCatalogPayload {
+  code?: string;
+  name: string;
+  address?: string;
+  notes?: string;
+  isActive?: boolean;
+}
+
+export interface TruckCatalog {
+  id: string;
+  plate: string;
+  description: string | null;
+  loadingMethod: LoadingMethod;
+  maxPayloadKg?: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  isActive: boolean;
+}
+
+export interface TrailerCatalog {
+  id: string;
+  code: string;
+  description: string | null;
+  maxPayloadKg?: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  isActive: boolean;
+}
+
+export interface OperationDestinationAssignment {
+  id: string;
+  operationId: string;
+  destinationCatalogId: string;
+  unloadingOrder: number;
+  notes: string | null;
+  catalog?: DestinationCatalog;
+}
+
+export interface OperationProductAssignment {
+  id: string;
+  operationId: string;
+  productCatalogId: string;
+  operationDestinationId: string | null;
+  quantity: number;
+  weightKgOverride?: number | null;
+  lengthMmOverride?: number | null;
+  widthMmOverride?: number | null;
+  heightMmOverride?: number | null;
+  stackableOverride?: boolean | null;
+  rotationAllowedOverride?: boolean | null;
+  notes: string | null;
+  catalog?: ProductCatalog;
+  operationDestination?: OperationDestinationAssignment | null;
+}
+
+export interface OperationVehicleAssignment {
+  id: string;
+  operationId: string;
+  truckCatalogId: string;
+  trailerCatalogId: string | null;
+  notes: string | null;
+  truck?: TruckCatalog;
+  trailer?: TrailerCatalog | null;
+}
+
+export interface OperationDetail extends OperationSummary {
+  truck: Truck | null;
+  destinations: Destination[];
+  products: Product[];
+  latestPlan: {
+    id: string;
+    version: number;
+    status: PlanStatus;
+    method: LoadingMethod;
+    isCurrent: boolean;
+    placedItemCount: number;
+    unplacedItemCount: number;
+    metrics: PlanMetrics | null;
+    alerts: PlanAlert[];
+    updatedAt: string;
+  } | null;
+}
+
+export interface PlanMetrics {
+  totalWeightKg?: number;
+  placedWeightKg?: number;
+  unplacedWeightKg?: number;
+  usedVolumeM3?: number;
+  volumeUtilizationPct?: number;
+  placedItemCount: number;
+  unplacedItemCount: number;
+  leftWeightKg?: number;
+  rightWeightKg?: number;
+  cabinSideWeightKg?: number;
+  centerWeightKg?: number;
+  doorSideWeightKg?: number;
+  criticalAlertCount: number;
+  warningAlertCount: number;
+  loadLengthMm?: number;
+  maxHeightMm?: number;
+  centerOfGravityX?: number;
+  centerOfGravityY?: number;
+  centerOfGravityZ?: number;
+}
+
+export interface PlanAlert {
+  id: string;
+  severity: string;
+  type: string;
+  message: string;
+  productId?: string | null;
+  placedItemId?: string | null;
+  createdAt: string;
+}
+
+export interface PlacedItem {
+  id: string;
+  productId: string;
+  unitIndex: number;
+  productCode: string;
+  productName: string;
+  productFamily: ProductFamily;
+  destinationName?: string;
+  zoneType?: TruckZoneType;
+  xMm: number;
+  yMm: number;
+  zMm: number;
+  rotationDeg: number;
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+  locked: boolean;
+  manuallyAdjusted: boolean;
+}
+
+export interface AdjustPlacedItemPayload {
+  xMm?: number;
+  yMm?: number;
+  zMm?: number;
+  rotationDeg?: number;
+  locked?: boolean;
+}
+
+export interface LoadingStep {
+  id: string;
+  planId: string;
+  placedItemId?: string | null;
+  sequence: number;
+  title: string;
+  instructions?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UnplacedItem {
+  id: string;
+  productId: string;
+  unitIndex: number;
+  productCode: string;
+  productName: string;
+  productFamily: ProductFamily;
+  destinationName?: string;
+  reason: string;
+  message: string;
+}
+
+export interface LoadingPlan {
+  id: string;
+  operationId: string;
+  operationCode: string;
+  operationStatus: OperationStatus;
+  version: number;
+  planStatus: PlanStatus;
+  loadingMethod: LoadingMethod;
+  isCurrent: boolean;
+  placedItems: PlacedItem[];
+  unplacedItems: UnplacedItem[];
+  steps: LoadingStep[];
+  alerts: PlanAlert[];
+  metrics: PlanMetrics | null;
+  createdAt: string;
+  updatedAt: string;
+  approvedAt?: string | null;
+  alertCounts: { critical: number; warning: number };
+}
+
+export interface LoadingPlanReport {
+  operation: OperationSummary;
+  truck: Truck | null;
+  destinations: Destination[];
+  products: Array<Product & { destinationName?: string | null }>;
+  plan: LoadingPlan;
+}

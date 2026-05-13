@@ -1,0 +1,24 @@
+{
+  "name": "camiones",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal steel truck loading and stowage planner monorepo.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @camiones/web",
+    "dev:api": "npm run dev -w @camiones/api",
+    "test": "npm run test --workspaces --if-present",
+    "test:api": "npm run test -w @camiones/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate -w @camiones/api",
+    "prisma:migrate": "npm run prisma:migrate -w @camiones/api --"
+  },
+  "engines": {
+    "node": ">=20.11.0",
+    "npm": ">=10.0.0"
+  }
+}
