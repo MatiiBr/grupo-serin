@@ -1,4 +1,4 @@
-import type { LoadingMethod, OperationStatus, PlanStatus, ProductFamily, TruckZoneType } from '@camiones/shared';
+import type { CreditStatus, CustomerStatus, DeliveryPlanStatus, DispatchOrderStatus, LoadingMethod, OperationStatus, OrderStatus, PlanStatus, ProductFamily, SellerPriority, TruckZoneType } from '@camiones/shared';
 
 export interface OperationSummary {
   id: string;
@@ -250,6 +250,126 @@ export interface OperationDestinationAssignmentPayload {
 export interface UpsertOperationVehicleAssignmentPayload {
   truckCatalogId: string;
   trailerCatalogId?: string | null;
+  notes?: string;
+}
+
+export interface Customer {
+  id: string;
+  code: string;
+  name: string;
+  taxId?: string | null;
+  status: CustomerStatus;
+  notes?: string | null;
+}
+
+export interface CustomerPayload {
+  code: string;
+  name: string;
+  taxId?: string;
+  notes?: string;
+}
+
+export interface OrderItem {
+  id: string;
+  orderId: string;
+  productCatalogId?: string | null;
+  productCode: string;
+  description?: string | null;
+  quantity: number;
+  weightKg?: number | null;
+  lengthMm?: number | null;
+  widthMm?: number | null;
+  heightMm?: number | null;
+  notes?: string | null;
+}
+
+export interface Order {
+  id: string;
+  code: string;
+  customerId: string;
+  status: OrderStatus;
+  creditStatus: CreditStatus;
+  sellerPriority: SellerPriority;
+  destinationCatalogId?: string | null;
+  destinationName?: string | null;
+  requestedDeliveryAt?: string | null;
+  externalRef?: string | null;
+  notes?: string | null;
+  customer?: Customer;
+  items?: OrderItem[];
+}
+
+export interface OrderPayload {
+  code?: string;
+  customerId: string;
+  sellerPriority?: SellerPriority;
+  destinationCatalogId?: string;
+  destinationName?: string;
+  requestedDeliveryAt?: string;
+  externalRef?: string;
+  notes?: string;
+  items: Array<{
+    productCatalogId?: string;
+    productCode: string;
+    description?: string;
+    quantity?: number;
+    weightKg?: number;
+    lengthMm?: number;
+    widthMm?: number;
+    heightMm?: number;
+    notes?: string;
+  }>;
+}
+
+export interface DeliveryPlan {
+  id: string;
+  code: string;
+  status: DeliveryPlanStatus;
+  plannedDate?: string | null;
+  notes?: string | null;
+}
+
+export interface DeliveryPlanPayload {
+  code?: string;
+  plannedDate?: string;
+  notes?: string;
+}
+
+export interface DispatchOrderItem {
+  id: string;
+  dispatchOrderId: string;
+  orderItemId: string;
+  productCatalogId: string;
+  productCodeSnapshot: string;
+  descriptionSnapshot?: string | null;
+  quantity: number;
+  weightKg?: number | null;
+  lengthMm?: number | null;
+  widthMm?: number | null;
+  heightMm?: number | null;
+}
+
+export interface DispatchOrder {
+  id: string;
+  code: string;
+  status: DispatchOrderStatus;
+  orderId: string;
+  deliveryPlanId?: string | null;
+  destinationCatalogId?: string | null;
+  destinationNameSnapshot?: string | null;
+  sellerPriority: SellerPriority;
+  requestedDeliveryAt?: string | null;
+  loadOperationId?: string | null;
+  notes?: string | null;
+  items?: DispatchOrderItem[];
+  order?: Order;
+  deliveryPlan?: DeliveryPlan | null;
+}
+
+export interface DispatchOrderPayload {
+  orderId: string;
+  code?: string;
+  deliveryPlanId?: string;
   notes?: string;
 }
 

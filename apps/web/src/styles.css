@@ -55,6 +55,31 @@ button { cursor: pointer; }
 .brand strong { display: block; margin-top: 3px; }
 .status-strip { color: #ffb45f; }
 
+.top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.top-nav button {
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 999px;
+  color: #ffe9c6;
+  background: rgba(255,255,255,.06);
+  padding: 9px 12px;
+  font-size: .76rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.top-nav button.active {
+  border-color: rgba(255,180,95,.78);
+  color: #1a1209;
+  background: #ffb45f;
+}
+
 .grid { display: grid; gap: 18px; }
 .two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -71,6 +96,12 @@ button { cursor: pointer; }
 }
 
 .hero-card { min-height: 360px; display: grid; align-content: end; }
+.lifecycle-hero {
+  background:
+    linear-gradient(135deg, rgba(255,180,95,.24), transparent 42%),
+    linear-gradient(90deg, rgba(255,255,255,.055) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(145deg, rgba(34,30,24,.98), rgba(19,17,14,.9));
+}
 h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 14px; font-size: clamp(2.8rem, 8vw, 6.8rem); line-height: .9; letter-spacing: -.07em; }
 h2 { margin-bottom: 6px; color: #fff7e8; }
@@ -95,7 +126,7 @@ textarea { resize: vertical; }
 .check { display: flex; align-items: center; gap: 8px; }
 .check input { width: auto; }
 
-button:not(.brand):not(.row):not(.dash):not(.back):not(.operation-nav button), .ghost {
+button:not(.brand):not(.row):not(.dash):not(.back):not(.operation-nav button):not(.top-nav button), .ghost {
   border: 0;
   border-radius: 999px;
   color: #1a1209;

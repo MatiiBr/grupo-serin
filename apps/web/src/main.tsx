@@ -5,16 +5,21 @@ import { Edges, OrbitControls, Text } from '@react-three/drei';
 import { StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { destinationsApi } from './api/destinations';
+import { LifecyclePage, OrdersPage, DispatchPage } from './features/lifecycle/LifecyclePage';
 import { loadingPlansApi } from './api/loading-plans';
 import { operationsApi } from './api/operations';
 import { productsApi } from './api/products';
 import { trucksApi } from './api/trucks';
-import type { LoadingPlan, OperationDestinationAssignment, OperationDetail, OperationProductAssignment, OperationSummary, OperationVehicleAssignment, PlacedItem, PlanAlert, ProductCatalog, Truck } from './api/types';
+import type { LoadingPlan, OperationDestinationAssignment, OperationDetail, OperationProductAssignment, OperationSummary, OperationVehicleAssignment, PlacedItem, PlanAlert, Truck } from './api/types';
+import { EmptyState, MutationError, QueryState, SectionTitle } from './components/ui';
+import { optionalDate, optionalInteger, optionalNumber, optionalText, requiredInteger, requiredText } from './lib/forms';
+import { formatAssignmentWeight, formatDate, formatNumber, formatProductDimensions } from './lib/formatters';
+import { navigate } from './lib/navigation';
 import './styles.css';
 
 const queryClient = new QueryClient();
 
-type RouteName = 'operations' | 'operation' | 'truck' | 'destinations' | 'products' | 'planner' | 'report' | 'not-found';
+type RouteName = 'lifecycle' | 'orders' | 'dispatch' | 'operations' | 'operation' | 'truck' | 'destinations' | 'products' | 'planner' | 'report' | 'not-found';
 
 interface Route {
   name: RouteName;
@@ -24,6 +29,9 @@ interface Route {
 function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean);
   if (parts.length === 0) return { name: 'operations' };
+  if (parts[0] === 'lifecycle') return { name: 'lifecycle' };
+  if (parts[0] === 'orders') return { name: 'orders' };
+  if (parts[0] === 'dispatch') return { name: 'dispatch' };
   if (parts[0] !== 'operations') return { name: 'not-found' };
   if (parts.length === 1) return { name: 'operations' };
   const operationId = parts[1];
@@ -34,11 +42,6 @@ function parseRoute(pathname: string): Route {
   if (parts[2] === 'planner') return { name: 'planner', operationId };
   if (parts[2] === 'report') return { name: 'report', operationId };
   return { name: 'not-found' };
-}
-
-function navigate(path: string) {
-  window.history.pushState(null, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
 function useRoute() {
@@ -63,9 +66,18 @@ function App() {
           <span>Camiones</span>
           <strong>Stowage Control</strong>
         </button>
-        <div className="status-strip">Acerera / Carga / Planificacion interna</div>
+        <nav className="top-nav" aria-label="Flujo logistico">
+          <button className={route.name === 'operations' ? 'active' : ''} type="button" onClick={() => navigate('/operations')}>Carga</button>
+          <button className={route.name === 'lifecycle' ? 'active' : ''} type="button" onClick={() => navigate('/lifecycle')}>Lifecycle</button>
+          <button className={route.name === 'orders' ? 'active' : ''} type="button" onClick={() => navigate('/orders')}>Pedidos</button>
+          <button className={route.name === 'dispatch' ? 'active' : ''} type="button" onClick={() => navigate('/dispatch')}>Dispatch</button>
+        </nav>
+        <div className="status-strip">Acerera / Pedido / Dispatch / Carga</div>
       </header>
 
+      {route.name === 'lifecycle' && <LifecyclePage />}
+      {route.name === 'orders' && <OrdersPage />}
+      {route.name === 'dispatch' && <DispatchPage />}
       {route.name === 'operations' && <OperationsPage />}
       {route.name === 'operation' && route.operationId && <OperationPage operationId={route.operationId} />}
       {route.name === 'truck' && route.operationId && <TruckPage operationId={route.operationId} />}
@@ -857,25 +869,6 @@ function DataTable({ title, headers, rows }: { title: string; headers: string[];
   return <div className="card"><SectionTitle title={title} subtitle={`${rows.length} registros`} /><div className="table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${title}-${index}`}>{row.map((cell, cellIndex) => <td key={`${title}-${index}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody></table></div></div>;
 }
 
-function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
-  return <div className="section-title"><h2>{title}</h2><p>{subtitle}</p></div>;
-}
-
-function EmptyState({ title, text }: { title: string; text: string }) {
-  return <section className="card empty"><h2>{title}</h2><p>{text}</p></section>;
-}
-
-function QueryState<T>({ query, children }: { query: { data?: T; isLoading: boolean; error: Error | null }; children: (data: T) => React.ReactNode }) {
-  if (query.isLoading) return <EmptyState title="Cargando" text="Consultando API local." />;
-  if (query.error) return <EmptyState title="Error" text={query.error.message} />;
-  if (query.data === undefined) return <EmptyState title="Sin datos" text="La API no devolvio contenido." />;
-  return <>{children(query.data)}</>;
-}
-
-function MutationError({ error }: { error: Error | null }) {
-  return error ? <p className="error">{error.message}</p> : null;
-}
-
 function useOperation(operationId: string) {
   return useQuery({ queryKey: ['operation', operationId], queryFn: () => operationsApi.get(operationId) });
 }
@@ -921,55 +914,6 @@ function handleProductAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, 
 
 function optionalCheckedOverride(form: FormData, key: string) {
   return form.get(key) === 'on' ? true : undefined;
-}
-
-function requiredText(form: FormData, key: string) {
-  const value = form.get(key)?.toString().trim();
-  if (!value) throw new Error(`${key} es requerido`);
-  return value;
-}
-
-function optionalText(form: FormData, key: string) {
-  const value = form.get(key)?.toString().trim();
-  return value ? value : undefined;
-}
-
-function requiredInteger(form: FormData, key: string) {
-  return Number.parseInt(requiredText(form, key), 10);
-}
-
-function optionalInteger(form: FormData, key: string) {
-  const value = optionalText(form, key);
-  return value ? Number.parseInt(value, 10) : undefined;
-}
-
-function optionalNumber(form: FormData, key: string) {
-  const value = optionalText(form, key);
-  return value ? Number(value) : undefined;
-}
-
-function optionalDate(form: FormData, key: string) {
-  const value = optionalText(form, key);
-  return value ? new Date(value).toISOString() : undefined;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
-}
-
-function formatProductDimensions(product: ProductCatalog | undefined) {
-  if (!product) return 'dimensiones sin catalogo';
-  return `${product.lengthMm ?? '-'} x ${product.widthMm ?? '-'} x ${product.heightMm ?? '-'} mm`;
-}
-
-function formatAssignmentWeight(assignment: OperationProductAssignment, product: ProductCatalog | undefined) {
-  return formatNumber(assignment.weightKgOverride ?? product?.weightKg, 'kg');
-}
-
-function formatNumber(value: number | string | null | undefined, suffix: string) {
-  if (value === undefined || value === null) return '-';
-  const numericValue = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(numericValue) ? `${numericValue.toFixed(2)} ${suffix}` : '-';
 }
 
 createRoot(document.getElementById('root')!).render(
