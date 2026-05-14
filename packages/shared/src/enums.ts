@@ -113,6 +113,12 @@ export enum PreparationStatus {
   DISCREPANCY = 'DISCREPANCY',
 }
 
+export enum CustomsReleaseStatus {
+  PENDING = 'PENDING',
+  CLEARED = 'CLEARED',
+  BLOCKED = 'BLOCKED',
+}
+
 export enum AuditAction {
   CREATED = 'CREATED',
   STATUS_CHANGED = 'STATUS_CHANGED',

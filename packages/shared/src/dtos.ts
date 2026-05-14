@@ -1,4 +1,5 @@
 import type {
+  CustomsReleaseStatus,
   CreditStatus,
   CustomerStatus,
   DeliveryPlanStatus,
@@ -301,6 +302,7 @@ export interface DispatchOrderDto {
   items?: DispatchOrderItemDto[];
   order?: OrderDto;
   deliveryPlan?: DeliveryPlanDto | null;
+  customsRelease?: CustomsReleaseDto | null;
 }
 
 export interface CreateDeliveryPlanDto {
@@ -393,6 +395,34 @@ export interface PreparationReadyItemDto {
 export interface CreatePreparationDto {
   reservationId: UUID;
   items: PreparationReadyItemDto[];
+  notes?: string;
+}
+
+export interface CustomsReleaseDto {
+  id: UUID;
+  dispatchOrderId: UUID;
+  status: CustomsReleaseStatus;
+  externalRef?: string | null;
+  blockedReason?: string | null;
+  notes?: string | null;
+  createdAt: ISODateString;
+  clearedAt?: ISODateString | null;
+  dispatchOrder?: DispatchOrderDto;
+}
+
+export interface CreateCustomsReleaseDto {
+  dispatchOrderId: UUID;
+  externalRef?: string;
+  notes?: string;
+}
+
+export interface ClearCustomsReleaseDto {
+  externalRef?: string;
+  notes?: string;
+}
+
+export interface BlockCustomsReleaseDto {
+  blockedReason: string;
   notes?: string;
 }
 

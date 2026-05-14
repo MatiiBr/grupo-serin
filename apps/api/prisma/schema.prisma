@@ -122,6 +122,12 @@ enum PreparationStatus {
   DISCREPANCY
 }
 
+enum CustomsReleaseStatus {
+  PENDING
+  CLEARED
+  BLOCKED
+}
+
 enum AuditAction {
   CREATED
   STATUS_CHANGED
@@ -326,12 +332,31 @@ model DispatchOrder {
   items              DispatchOrderItem[]
   reservations       Reservation[]
   preparations       Preparation[]
+  customsRelease     CustomsRelease?
 
   @@index([status])
   @@index([orderId])
   @@index([deliveryPlanId])
   @@index([destinationCatalogId])
   @@index([requestedDeliveryAt])
+}
+
+model CustomsRelease {
+  id              String               @id @default(uuid())
+  dispatchOrderId String               @unique
+  status          CustomsReleaseStatus @default(PENDING)
+  externalRef     String?
+  blockedReason   String?
+  notes           String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  clearedAt       DateTime?
+
+  dispatchOrder DispatchOrder @relation(fields: [dispatchOrderId], references: [id], onDelete: Restrict)
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([clearedAt])
 }
 
 model DispatchOrderItem {

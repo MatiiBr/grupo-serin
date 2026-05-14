@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { AuditAction, DispatchOrderStatus, PreparationStatus } from '@prisma/client';
+import { AuditAction, CustomsReleaseStatus, DispatchOrderStatus, PreparationStatus } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,6 +12,7 @@ const dispatchOrder = {
   status: DispatchOrderStatus.PLANNED,
   items: [{ id: 'dispatch-item-1', productCatalog: { weightKg: null } }],
   preparations: [],
+  customsRelease: null,
 };
 
 function createService() {
@@ -51,6 +52,7 @@ describe('DispatchService preparation readiness gate', () => {
     prisma.dispatchOrder.findUnique.mockResolvedValue({
       ...dispatchOrder,
       preparations: [{ id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 }],
+      customsRelease: null,
     });
     prisma.dispatchOrder.update.mockResolvedValue({
       ...dispatchOrder,
@@ -66,6 +68,51 @@ describe('DispatchService preparation readiness gate', () => {
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ actor: 'planner@example.com', action: AuditAction.READY_TO_LOAD }));
   });
 
+  it('blocks dispatch readiness when required customs clearance is still pending', async () => {
+    const { prisma, service } = createService();
+    prisma.dispatchOrder.findUnique.mockResolvedValue({
+      ...dispatchOrder,
+      preparations: [{ id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 }],
+      customsRelease: { id: 'customs-1', status: CustomsReleaseStatus.PENDING },
+    });
+
+    await expect(service.markReady(dispatchOrder.id)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.dispatchOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks dispatch readiness when required customs clearance is blocked', async () => {
+    const { prisma, service } = createService();
+    prisma.dispatchOrder.findUnique.mockResolvedValue({
+      ...dispatchOrder,
+      preparations: [{ id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 }],
+      customsRelease: { id: 'customs-1', status: CustomsReleaseStatus.BLOCKED },
+    });
+
+    await expect(service.markReady(dispatchOrder.id)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.dispatchOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('allows dispatch readiness after required customs clearance is cleared', async () => {
+    const { prisma, service } = createService();
+    prisma.dispatchOrder.findUnique.mockResolvedValue({
+      ...dispatchOrder,
+      preparations: [{ id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 }],
+      customsRelease: { id: 'customs-1', status: CustomsReleaseStatus.CLEARED },
+    });
+    prisma.dispatchOrder.update.mockResolvedValue({
+      ...dispatchOrder,
+      status: DispatchOrderStatus.READY_TO_LOAD,
+      order: { id: 'order-1' },
+      deliveryPlan: null,
+      items: [{ id: 'dispatch-item-1', weightKg: null, productCatalog: { weightKg: null } }],
+      customsRelease: { id: 'customs-1', status: CustomsReleaseStatus.CLEARED },
+    });
+
+    await expect(service.markReady(dispatchOrder.id)).resolves.toMatchObject({ status: DispatchOrderStatus.READY_TO_LOAD });
+  });
+
   it('blocks dispatch readiness when any preparation for the dispatch has discrepancies', async () => {
     const { prisma, service } = createService();
     prisma.dispatchOrder.findUnique.mockResolvedValue({
@@ -74,6 +121,7 @@ describe('DispatchService preparation readiness gate', () => {
         { id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 },
         { id: 'preparation-2', status: PreparationStatus.DISCREPANCY, discrepancyQuantity: 1 },
       ],
+      customsRelease: null,
     });
 
     await expect(service.markReady(dispatchOrder.id)).rejects.toBeInstanceOf(BadRequestException);
@@ -92,6 +140,39 @@ describe('DispatchService preparation readiness gate', () => {
         { id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 },
         { id: 'preparation-2', status: PreparationStatus.DISCREPANCY, discrepancyQuantity: 1 },
       ],
+      customsRelease: null,
+    });
+
+    await expect(service.createLoadOperation(dispatchOrder.id)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('blocks load operation creation when required customs clearance is pending', async () => {
+    const { prisma, service } = createService();
+    prisma.dispatchOrder.findUnique.mockResolvedValue({
+      ...dispatchOrder,
+      status: DispatchOrderStatus.READY_TO_LOAD,
+      loadOperationId: null,
+      loadOperation: null,
+      preparations: [{ id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 }],
+      customsRelease: { id: 'customs-1', status: CustomsReleaseStatus.PENDING },
+    });
+
+    await expect(service.createLoadOperation(dispatchOrder.id)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('blocks load operation creation when required customs clearance is blocked', async () => {
+    const { prisma, service } = createService();
+    prisma.dispatchOrder.findUnique.mockResolvedValue({
+      ...dispatchOrder,
+      status: DispatchOrderStatus.READY_TO_LOAD,
+      loadOperationId: null,
+      loadOperation: null,
+      preparations: [{ id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 }],
+      customsRelease: { id: 'customs-1', status: CustomsReleaseStatus.BLOCKED },
     });
 
     await expect(service.createLoadOperation(dispatchOrder.id)).rejects.toBeInstanceOf(BadRequestException);
@@ -127,6 +208,7 @@ describe('DispatchService preparation readiness gate', () => {
         { id: 'preparation-1', status: PreparationStatus.READY, discrepancyQuantity: 0 },
         { id: 'preparation-2', status: PreparationStatus.READY, discrepancyQuantity: 0 },
       ],
+      customsRelease: { id: 'customs-1', status: CustomsReleaseStatus.CLEARED },
       items: [
         {
           id: 'dispatch-item-1',

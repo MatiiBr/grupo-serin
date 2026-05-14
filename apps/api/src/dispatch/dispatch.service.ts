@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, AuditSource, PreparationStatus, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { customsReleaseAllowsLoading } from '../domain/customs/customs-release-lifecycle';
 import { canCreateDispatchOrder, ensureDispatchReadyForLoading, markLoadOperationLinked, markReadyToLoad } from '../domain/dispatch/dispatch-lifecycle';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDeliveryPlanDto } from './dto/create-delivery-plan.dto';
@@ -130,11 +131,14 @@ export class DispatchService {
   }
 
   async markReady(id: string, actor?: string) {
-    const dispatchOrder = await this.prisma.dispatchOrder.findUnique({ where: { id }, include: { items: true, preparations: true } });
+    const dispatchOrder = await this.prisma.dispatchOrder.findUnique({ where: { id }, include: { items: true, preparations: true, customsRelease: true } });
     if (!dispatchOrder) throw new NotFoundException('Dispatch order not found.');
     if (dispatchOrder.items.length === 0) throw new BadRequestException('Dispatch order must have at least one item before loading handoff.');
     if (!preparationsAllowLoading(dispatchOrder.preparations)) {
       throw new BadRequestException('Dispatch order needs a ready warehouse preparation without discrepancies before loading handoff.');
+    }
+    if (!customsReleaseAllowsLoading(dispatchOrder.customsRelease)) {
+      throw new BadRequestException('Customs clearance is required before loading handoff.');
     }
 
     const updated = await this.prisma.dispatchOrder.update({ where: { id }, data: markReadyToLoad(), include: this.dispatchInclude() });
@@ -162,6 +166,7 @@ export class DispatchService {
         destinationCatalog: true,
         loadOperation: true,
         preparations: true,
+        customsRelease: true,
         items: { orderBy: { createdAt: 'asc' }, include: { productCatalog: true } },
       },
     });
@@ -172,6 +177,9 @@ export class DispatchService {
     }
     if (!preparationsAllowLoading(dispatchOrder.preparations)) {
       throw new BadRequestException('Ready warehouse preparation is required before creating a load operation.');
+    }
+    if (!customsReleaseAllowsLoading(dispatchOrder.customsRelease)) {
+      throw new BadRequestException('Customs clearance is required before creating a load operation.');
     }
 
     const operation = await this.prisma.$transaction(async (tx) => {
@@ -245,6 +253,7 @@ export class DispatchService {
       order: { include: { customer: true } },
       deliveryPlan: true,
       items: { orderBy: { createdAt: 'asc' }, include: { productCatalog: true } },
+      customsRelease: true,
     } satisfies Prisma.DispatchOrderInclude;
   }
 
