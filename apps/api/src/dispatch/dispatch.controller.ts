@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { RequireRoles } from '../auth/require-roles.decorator';
+import { AuthRole } from '../auth/roles';
 import { DispatchService } from './dispatch.service';
 import { CreateDeliveryPlanDto } from './dto/create-delivery-plan.dto';
 import { CreateDispatchOrderDto } from './dto/create-dispatch-order.dto';
@@ -34,12 +36,14 @@ export class DispatchController {
   }
 
   @Post('dispatch-orders/:id/ready')
+  @RequireRoles(AuthRole.DISPATCH_OPERATOR, AuthRole.LOGISTICS_MANAGER)
   @ApiOkResponse({ description: 'Marks a dispatch order snapshot ready for loading.' })
   markReady(@Param('id', ParseUUIDPipe) id: string, @Headers('x-actor') actor?: string) {
     return this.dispatchService.markReady(id, actor);
   }
 
   @Post('dispatch-orders/:id/load-operation')
+  @RequireRoles(AuthRole.DISPATCH_OPERATOR, AuthRole.LOGISTICS_MANAGER)
   @ApiCreatedResponse({ description: 'Creates or returns the load operation snapshot for a ready dispatch order.' })
   createLoadOperation(@Param('id', ParseUUIDPipe) id: string, @Headers('x-actor') actor?: string) {
     return this.dispatchService.createLoadOperation(id, actor);

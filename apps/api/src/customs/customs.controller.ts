@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { RequireRoles } from '../auth/require-roles.decorator';
+import { AuthRole } from '../auth/roles';
 import { CustomsService } from './customs.service';
 import { BlockCustomsReleaseDto, ClearCustomsReleaseDto, CreateCustomsReleaseDto } from './dto/customs-release.dto';
 
@@ -9,18 +11,21 @@ export class CustomsController {
   constructor(private readonly customsService: CustomsService) {}
 
   @Post()
+  @RequireRoles(AuthRole.CUSTOMS_OPERATOR, AuthRole.LOGISTICS_MANAGER)
   @ApiCreatedResponse({ description: 'Registers a customs checkpoint required before dispatch can load.' })
   createRelease(@Body() dto: CreateCustomsReleaseDto, @Headers('x-actor') actor?: string) {
     return this.customsService.createRelease(dto, actor);
   }
 
   @Post(':id/clear')
+  @RequireRoles(AuthRole.CUSTOMS_OPERATOR, AuthRole.LOGISTICS_MANAGER)
   @ApiOkResponse({ description: 'Clears a customs checkpoint so dispatch can proceed to loading.' })
   clearRelease(@Param('id') id: string, @Body() dto: ClearCustomsReleaseDto, @Headers('x-actor') actor?: string) {
     return this.customsService.clearRelease(id, dto, actor);
   }
 
   @Post(':id/block')
+  @RequireRoles(AuthRole.CUSTOMS_OPERATOR, AuthRole.LOGISTICS_MANAGER)
   @ApiOkResponse({ description: 'Blocks a customs checkpoint and keeps dispatch pending.' })
   blockRelease(@Param('id') id: string, @Body() dto: BlockCustomsReleaseDto, @Headers('x-actor') actor?: string) {
     return this.customsService.blockRelease(id, dto, actor);

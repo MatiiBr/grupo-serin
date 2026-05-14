@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { RequireRoles } from '../auth/require-roles.decorator';
+import { AuthRole } from '../auth/roles';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
 import { LoadingPlansService } from './loading-plans.service';
 
@@ -27,6 +29,7 @@ export class LoadingPlansController {
   }
 
   @Post('loading-plans/:planId/approve')
+  @RequireRoles(AuthRole.LOADING_SUPERVISOR, AuthRole.LOGISTICS_MANAGER)
   @ApiOkResponse({ description: 'Approves a valid loading plan and its parent operation.' })
   approve(@Param('planId', ParseUUIDPipe) planId: string, @Headers('x-actor') actor?: string) {
     return this.loadingPlansService.approve(planId, actor);
@@ -39,6 +42,7 @@ export class LoadingPlansController {
   }
 
   @Patch('loading-plans/:planId/placed-items/:placedItemId')
+  @RequireRoles(AuthRole.LOADING_SUPERVISOR, AuthRole.LOGISTICS_MANAGER)
   @ApiOkResponse({ description: 'Manually adjusts a placed item and recalculates plan validation.' })
   updatePlacedItem(
     @Param('planId', ParseUUIDPipe) planId: string,

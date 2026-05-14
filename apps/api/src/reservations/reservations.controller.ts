@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { RequireRoles } from '../auth/require-roles.decorator';
+import { AuthRole } from '../auth/roles';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ReservationsService } from './reservations.service';
 
@@ -9,6 +11,7 @@ export class ReservationsController {
   constructor(private readonly reservationsService: ReservationsService) {}
 
   @Post()
+  @RequireRoles(AuthRole.WAREHOUSE_OPERATOR, AuthRole.LOGISTICS_MANAGER)
   @ApiCreatedResponse({ description: 'Requests inventory reservation against dispatch demand and records unmet quantity for reprocess.' })
   createReservation(@Body() dto: CreateReservationDto, @Headers('x-actor') actor?: string) {
     return this.reservationsService.createReservation(dto, actor);
@@ -27,6 +30,7 @@ export class ReservationsController {
   }
 
   @Post(':id/release')
+  @RequireRoles(AuthRole.WAREHOUSE_OPERATOR, AuthRole.LOGISTICS_MANAGER)
   @ApiOkResponse({ description: 'Releases a reservation explicitly.' })
   release(@Param('id', ParseUUIDPipe) id: string, @Headers('x-actor') actor?: string) {
     return this.reservationsService.release(id, actor);
