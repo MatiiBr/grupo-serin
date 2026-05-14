@@ -1,10 +1,14 @@
 import 'dotenv/config';
 import { CreditStatus, LoadingMethod, OrderStatus, ProductFamily, SellerPriority, TruckZoneType } from '@prisma/client';
 import { AuditService } from '../src/audit/audit.service';
+import { CustomsService } from '../src/customs/customs.service';
 import { DispatchService } from '../src/dispatch/dispatch.service';
 import { LoadingPlansService } from '../src/loading-plans/loading-plans.service';
 import { OrdersService } from '../src/orders/orders.service';
+import { PreparationService } from '../src/preparation/preparation.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { ReservationsService } from '../src/reservations/reservations.service';
+import { TransportService } from '../src/transport/transport.service';
 
 const WEB_BASE_URL = 'http://localhost:5173';
 const SEED_ACTOR = 'seed:demo-lifecycle';
@@ -30,7 +34,11 @@ async function main() {
     const auditService = new AuditService(prisma);
     const ordersService = new OrdersService(prisma, auditService);
     const dispatchService = new DispatchService(prisma, auditService);
+    const reservationsService = new ReservationsService(prisma, auditService);
+    const preparationService = new PreparationService(prisma, auditService);
+    const customsService = new CustomsService(prisma, auditService);
     const loadingPlansService = new LoadingPlansService(prisma, auditService);
+    const transportService = new TransportService(prisma, auditService);
 
     const catalog = await createCatalog(prisma);
     const customers = await createCustomers(ordersService);
@@ -50,11 +58,14 @@ async function main() {
       code: CODES.dispatchOrders[0],
       orderId: orders.ready.id,
       deliveryPlanId: deliveryPlan.id,
-      notes: 'Dispatch demo que avanza a READY_TO_LOAD y crea una operacion de carga.',
+      notes: 'Dispatch demo que recorre reserva, preparacion, aduana, carga aprobada y salida transporte.',
     }, SEED_ACTOR);
+    await reservePrepareAndClearDispatch(reservationsService, preparationService, customsService, readyDispatch.id, readyDispatch.items);
     await dispatchService.markReady(readyDispatch.id, SEED_ACTOR);
     const linkedOperation = await dispatchService.createLoadOperation(readyDispatch.id, SEED_ACTOR);
-    await attachTruckAndGeneratePlan(prisma, loadingPlansService, linkedOperation.id, catalog);
+    const currentPlan = await attachTruckAndGeneratePlan(prisma, loadingPlansService, linkedOperation.id, catalog);
+    const approvedPlan = await loadingPlansService.approve(currentPlan.id, SEED_ACTOR);
+    const transportExit = await completeTransportExit(transportService, readyDispatch.id);
 
     const plannedDispatch = await dispatchService.createDispatchOrder({
       code: CODES.dispatchOrders[1],
@@ -68,7 +79,7 @@ async function main() {
       where: { id: linkedOperation.id },
       include: { plans: { where: { isCurrent: true }, include: { metrics: true } } },
     });
-    const currentPlan = linkedOperationDetail.plans[0];
+    const persistedCurrentPlan = linkedOperationDetail.plans[0];
 
     console.log(JSON.stringify({
       message: 'Demo lifecycle seed loaded',
@@ -86,6 +97,8 @@ async function main() {
         blockedOrder: `${OrderStatus.CREDIT_HELD}/${CreditStatus.HELD}`,
         readyDispatch: 'LOAD_OPERATION_LINKED',
         plannedDispatch: plannedDispatch.status,
+        loadingPlan: approvedPlan.planStatus,
+        transportExit: transportExit.status,
         auditEvents: auditCount,
       },
       frontendPaths: {
@@ -96,14 +109,14 @@ async function main() {
         planner: `${WEB_BASE_URL}/operations/${linkedOperation.id}/planner`,
         report: `${WEB_BASE_URL}/operations/${linkedOperation.id}/report`,
       },
-      planner: currentPlan ? {
-        planId: currentPlan.id,
-        version: currentPlan.version,
-        status: currentPlan.status,
-        placedItems: currentPlan.metrics?.placedItemCount ?? 0,
-        unplacedItems: currentPlan.metrics?.unplacedItemCount ?? 0,
-        criticalAlerts: currentPlan.metrics?.criticalAlertCount ?? 0,
-        warningAlerts: currentPlan.metrics?.warningAlertCount ?? 0,
+      planner: persistedCurrentPlan ? {
+        planId: persistedCurrentPlan.id,
+        version: persistedCurrentPlan.version,
+        status: persistedCurrentPlan.status,
+        placedItems: persistedCurrentPlan.metrics?.placedItemCount ?? 0,
+        unplacedItems: persistedCurrentPlan.metrics?.unplacedItemCount ?? 0,
+        criticalAlerts: persistedCurrentPlan.metrics?.criticalAlertCount ?? 0,
+        warningAlerts: persistedCurrentPlan.metrics?.warningAlertCount ?? 0,
       } : null,
     }, null, 2));
   } finally {
@@ -114,6 +127,12 @@ async function main() {
 async function resetDemoData(prisma: PrismaService) {
   await prisma.$transaction([
     prisma.auditEvent.deleteMany(),
+    prisma.transportExit.deleteMany(),
+    prisma.customsRelease.deleteMany(),
+    prisma.preparationItem.deleteMany(),
+    prisma.preparation.deleteMany(),
+    prisma.reservationItem.deleteMany(),
+    prisma.reservation.deleteMany(),
     prisma.loadAlert.deleteMany(),
     prisma.loadingStep.deleteMany(),
     prisma.unplacedItem.deleteMany(),
@@ -141,6 +160,46 @@ async function resetDemoData(prisma: PrismaService) {
     prisma.destinationCatalog.deleteMany(),
     prisma.productCatalog.deleteMany(),
   ]);
+}
+
+async function reservePrepareAndClearDispatch(
+  reservationsService: ReservationsService,
+  preparationService: PreparationService,
+  customsService: CustomsService,
+  dispatchOrderId: string,
+  dispatchItems: Array<{ id: string; quantity: number }>,
+) {
+  const reservation = await reservationsService.createReservation({
+    dispatchOrderId,
+    availability: dispatchItems.map((item) => ({ dispatchOrderItemId: item.id, availableQuantity: item.quantity })),
+    externalRef: 'INV-DEMO-RESERVA-001',
+    notes: 'Reserva completa demo antes de preparacion.',
+  }, SEED_ACTOR);
+
+  await preparationService.createPreparation({
+    reservationId: reservation.id,
+    items: reservation.items.map((item) => ({ reservationItemId: item.id, readyQuantity: item.reservedQuantity })),
+    notes: 'Preparacion demo lista sin discrepancias.',
+  }, SEED_ACTOR);
+
+  const customsRelease = await customsService.createRelease({
+    dispatchOrderId,
+    externalRef: 'ADU-DEMO-001',
+    notes: 'Checkpoint aduana demo requerido para liberar handoff a carga.',
+  }, SEED_ACTOR);
+  await customsService.clearRelease(customsRelease.id, { externalRef: 'ADU-DEMO-001-CLEARED', notes: 'Aduana demo liberada.' }, SEED_ACTOR);
+}
+
+async function completeTransportExit(transportService: TransportService, dispatchOrderId: string) {
+  const transportExit = await transportService.createExit({
+    dispatchOrderId,
+    externalRef: 'TRP-DEMO-001',
+    notes: 'Salida transporte demo posterior a plan aprobado.',
+  }, SEED_ACTOR);
+  await transportService.markDocsReady(transportExit.id, { externalRef: 'DOC-DEMO-001', notes: 'Documentacion demo lista.' }, SEED_ACTOR);
+  await transportService.recordScale(transportExit.id, { scaleWeightKg: 23120, externalRef: 'BAS-DEMO-001', notes: 'Pesaje demo registrado.' }, SEED_ACTOR);
+  await transportService.authorizeExit(transportExit.id, SEED_ACTOR);
+  return transportService.markDispatched(transportExit.id, SEED_ACTOR);
 }
 
 async function createCatalog(prisma: PrismaService) {
