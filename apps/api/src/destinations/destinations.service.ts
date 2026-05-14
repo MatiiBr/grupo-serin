@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDestinationCatalogDto, CreateOperationDestinationAssignmentDto } from './dto/create-destination.dto';
@@ -102,6 +102,35 @@ export class DestinationsService {
       this.handleAssignmentConstraintError(error);
       throw error;
     }
+  }
+
+  async reorder(operationId: string, ids: string[]) {
+    await this.ensureOperationExists(operationId);
+    const assignments = await this.prisma.operationDestinationAssignment.findMany({
+      where: { operationId },
+      select: { id: true },
+    });
+
+    const knownIds = new Set(assignments.map((assignment) => assignment.id));
+    const uniqueIds = new Set(ids);
+
+    if (ids.length !== assignments.length || uniqueIds.size !== ids.length || ids.some((id) => !knownIds.has(id))) {
+      throw new BadRequestException('Reorder payload must include every destination assignment exactly once.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await Promise.all(ids.map((id, index) => tx.operationDestinationAssignment.update({
+        where: { id },
+        data: { unloadingOrder: -(index + 1) },
+      })));
+
+      await Promise.all(ids.map((id, index) => tx.operationDestinationAssignment.update({
+        where: { id },
+        data: { unloadingOrder: index + 1 },
+      })));
+    });
+
+    return this.findForOperation(operationId);
   }
 
   async remove(id: string) {

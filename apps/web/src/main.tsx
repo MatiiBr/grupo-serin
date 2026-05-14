@@ -236,7 +236,15 @@ function DestinationsPage({ operationId }: { operationId: string }) {
   const catalog = useQuery({ queryKey: ['destination-catalog'], queryFn: () => destinationsApi.searchCatalog() });
   const destinations = useQuery({ queryKey: ['destination-assignments', operationId], queryFn: () => destinationsApi.listAssignments(operationId) });
   const createDestination = useMutation({
-    mutationFn: destinationsApi.createAssignment.bind(null, operationId),
+    mutationFn: (payload: Omit<Parameters<typeof destinationsApi.createAssignment>[1], 'unloadingOrder'>) =>
+      destinationsApi.createAssignment(operationId, { ...payload, unloadingOrder: nextDestinationOrder(destinations.data ?? []) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['destination-assignments', operationId] });
+      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+    },
+  });
+  const reorderDestinations = useMutation({
+    mutationFn: (ids: string[]) => destinationsApi.reorderAssignments(operationId, ids),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['destination-assignments', operationId] });
       void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
@@ -249,11 +257,10 @@ function DestinationsPage({ operationId }: { operationId: string }) {
       <QueryState query={operation}>{(item) => <OperationHeader operation={item} />}</QueryState>
       <section className="grid two">
         <div className="card">
-          <SectionTitle title="Asignar destino" subtitle="Catalogo reutilizable + orden operativo" />
+          <SectionTitle title="Asignar destino" subtitle="Catalogo reutilizable; la secuencia se asigna automaticamente" />
           <QueryState query={catalog}>
             {(items) => <form className="form" onSubmit={(event) => handleDestinationAssignmentSubmit(event, createDestination.mutate)}>
             <label>Destino de catalogo<select name="destinationCatalogId" required><option value="">Seleccionar destino</option>{items.map((destination) => <option key={destination.id} value={destination.id}>{destination.name}{destination.code ? ` / ${destination.code}` : ''}</option>)}</select></label>
-            <label>Orden<input name="unloadingOrder" type="number" min="1" required /></label>
             <label>Notas de operacion<textarea name="notes" rows={3} /></label>
             <button disabled={createDestination.isPending || items.length === 0}>Asignar destino</button>
             <MutationError error={createDestination.error} />
@@ -261,11 +268,12 @@ function DestinationsPage({ operationId }: { operationId: string }) {
           </QueryState>
         </div>
         <div className="card">
-          <SectionTitle title="Destinos" subtitle="Secuencia operativa" />
+          <SectionTitle title="Destinos" subtitle="Secuencia operativa continua" />
           <QueryState query={destinations}>
-            {(items) => <DestinationList items={items} onDelete={(id) => deleteDestination.mutate(id)} />}
+            {(items) => <DestinationList items={items} onDelete={(id) => deleteDestination.mutate(id)} onMove={(ids) => reorderDestinations.mutate(ids)} isReordering={reorderDestinations.isPending} />}
           </QueryState>
           <MutationError error={deleteDestination.error} />
+          <MutationError error={reorderDestinations.error} />
         </div>
       </section>
     </main>
@@ -839,9 +847,10 @@ function VehicleAssignmentSummary({ item }: { item: OperationVehicleAssignment }
   );
 }
 
-function DestinationList({ items, onDelete }: { items: OperationDestinationAssignment[]; onDelete: (id: string) => void }) {
+function DestinationList({ items, onDelete, onMove, isReordering }: { items: OperationDestinationAssignment[]; onDelete: (id: string) => void; onMove: (ids: string[]) => void; isReordering: boolean }) {
   if (items.length === 0) return <p className="muted">Sin destinos cargados.</p>;
-  return <div className="list compact">{items.map((item) => <div className="item" key={item.id}><span><strong>#{item.unloadingOrder} {item.catalog?.name ?? item.destinationCatalogId}</strong><small>{item.catalog?.code ?? 'Sin codigo'} {item.catalog?.address ? `/ ${item.catalog.address}` : ''}{item.notes ? ` / ${item.notes}` : ''}</small></span><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></div>)}</div>;
+  const sortedItems = [...items].sort((left, right) => left.unloadingOrder - right.unloadingOrder);
+  return <div className="list compact sequence-list">{sortedItems.map((item, index) => <div className="item sequence-item" key={item.id}><span className="sequence-badge">{index + 1}</span><span><strong>{item.catalog?.name ?? item.destinationCatalogId}</strong><small>{item.catalog?.code ?? 'Sin codigo'} {item.catalog?.address ? `/ ${item.catalog.address}` : ''}{item.notes ? ` / ${item.notes}` : ''}</small></span><span className="sequence-actions"><button className="ghost" disabled={isReordering || index === 0} onClick={() => onMove(moveDestination(sortedItems, index, -1))}>Subir</button><button className="ghost" disabled={isReordering || index === sortedItems.length - 1} onClick={() => onMove(moveDestination(sortedItems, index, 1))}>Bajar</button><button className="ghost" onClick={() => onDelete(item.id)}>Eliminar</button></span></div>)}</div>;
 }
 
 function ProductAssignmentList({ items, onDelete }: { items: OperationProductAssignment[]; onDelete: (id: string) => void }) {
@@ -883,15 +892,26 @@ function useDeleteMutation<T>(mutationFn: (id: string) => Promise<T>, ...queryKe
   });
 }
 
-function handleDestinationAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof destinationsApi.createAssignment>[1]) => void) {
+function handleDestinationAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Omit<Parameters<typeof destinationsApi.createAssignment>[1], 'unloadingOrder'>) => void) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   submit({
     destinationCatalogId: requiredText(form, 'destinationCatalogId'),
-    unloadingOrder: requiredInteger(form, 'unloadingOrder'),
     notes: optionalText(form, 'notes'),
   });
   event.currentTarget.reset();
+}
+
+function nextDestinationOrder(items: OperationDestinationAssignment[]) {
+  if (items.length === 0) return 1;
+  return Math.max(...items.map((item) => item.unloadingOrder)) + 1;
+}
+
+function moveDestination(items: OperationDestinationAssignment[], index: number, direction: -1 | 1) {
+  const nextItems = [...items];
+  const targetIndex = index + direction;
+  [nextItems[index], nextItems[targetIndex]] = [nextItems[targetIndex], nextItems[index]];
+  return nextItems.map((item) => item.id);
 }
 
 function handleProductAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof productsApi.createAssignment>[1]) => void) {

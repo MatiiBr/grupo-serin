@@ -16,6 +16,8 @@ export const destinationsApi = {
   listAssignments: (operationId: string) => apiRequest<OperationDestinationAssignment[]>(`/operations/${operationId}/destinations`),
   createAssignment: (operationId: string, payload: OperationDestinationAssignmentPayload) =>
     apiRequest<OperationDestinationAssignment>(`/operations/${operationId}/destinations`, { method: 'POST', body: jsonBody(payload) }),
+  reorderAssignments: (operationId: string, ids: string[]) =>
+    apiRequest<OperationDestinationAssignment[]>(`/operations/${operationId}/destinations/reorder`, { method: 'PATCH', body: jsonBody({ ids }) }),
   updateAssignment: (assignmentId: string, payload: Partial<OperationDestinationAssignmentPayload>) =>
     apiRequest<OperationDestinationAssignment>(`/operation-destinations/${assignmentId}`, { method: 'PATCH', body: jsonBody(payload) }),
   removeAssignment: (assignmentId: string) => apiRequest<DeleteResponse>(`/operation-destinations/${assignmentId}`, { method: 'DELETE' }),

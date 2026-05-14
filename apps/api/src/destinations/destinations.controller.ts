@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { DestinationsService } from './destinations.service';
 import { CreateDestinationCatalogDto, CreateOperationDestinationAssignmentDto } from './dto/create-destination.dto';
-import { UpdateDestinationCatalogDto, UpdateOperationDestinationAssignmentDto } from './dto/update-destination.dto';
+import { ReorderOperationDestinationsDto, UpdateDestinationCatalogDto, UpdateOperationDestinationAssignmentDto } from './dto/update-destination.dto';
 
 @ApiTags('destinations')
 @Controller()
@@ -43,6 +43,12 @@ export class DestinationsController {
   @ApiOkResponse({ description: 'Lists destination assignments for an operation.' })
   findForOperation(@Param('operationId', ParseUUIDPipe) operationId: string) {
     return this.destinationsService.findForOperation(operationId);
+  }
+
+  @Patch('operations/:operationId/destinations/reorder')
+  @ApiOkResponse({ description: 'Reorders destination assignments for an operation.' })
+  reorder(@Param('operationId', ParseUUIDPipe) operationId: string, @Body() dto: ReorderOperationDestinationsDto) {
+    return this.destinationsService.reorder(operationId, dto.ids);
   }
 
   @Patch('operation-destinations/:id')

@@ -161,6 +161,23 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 .row span, .item span { display: grid; gap: 4px; }
 .chips, .actions { display: flex !important; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .chips i { border-radius: 999px; background: rgba(255,180,95,.12); color: #ffc782; padding: 5px 8px; font-size: .75rem; font-style: normal; }
+.sequence-list { counter-reset: destination-sequence; }
+.sequence-item { justify-content: flex-start; }
+.sequence-item > span:not(.sequence-badge) { flex: 1; }
+.sequence-actions { display: flex !important; flex: 0 0 auto; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.sequence-actions .ghost:disabled { opacity: .35; }
+.sequence-badge {
+  align-items: center;
+  background: #ffb45f;
+  border-radius: 999px;
+  color: #1a1209;
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  font-weight: 950;
+  height: 40px;
+  justify-content: center;
+  width: 40px;
+}
 .assignment-summary { display: grid; gap: 6px; border: 1px solid rgba(255,180,95,.24); border-radius: 18px; background: rgba(255,180,95,.08); padding: 14px; }
 .assignment-summary strong { color: #fff7e8; }
 .assignment-summary span { color: #d8c8ad; font-size: .88rem; }
