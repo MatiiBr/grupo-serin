@@ -7,6 +7,7 @@ import { DispatchModule } from './dispatch/dispatch.module';
 import { LoadingPlansModule } from './loading-plans/loading-plans.module';
 import { OperationsModule } from './operations/operations.module';
 import { OrdersModule } from './orders/orders.module';
+import { PreparationModule } from './preparation/preparation.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { ReservationsModule } from './reservations/reservations.module';
@@ -22,6 +23,7 @@ import { TrucksModule } from './trucks/trucks.module';
     DestinationsModule,
     DispatchModule,
     ProductsModule,
+    PreparationModule,
     ReservationsModule,
     OrdersModule,
     LoadingPlansModule,

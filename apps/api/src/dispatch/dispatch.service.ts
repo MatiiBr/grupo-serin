@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, AuditSource, Prisma } from '@prisma/client';
+import { AuditAction, AuditSource, PreparationStatus, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { canCreateDispatchOrder, ensureDispatchReadyForLoading, markLoadOperationLinked, markReadyToLoad } from '../domain/dispatch/dispatch-lifecycle';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +17,10 @@ function generateCode(prefix: string) {
   const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
   const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}-${date}-${suffix}`;
+}
+
+function preparationsAllowLoading(preparations: Array<{ status: PreparationStatus; discrepancyQuantity: number }>) {
+  return preparations.length > 0 && preparations.every((preparation) => preparation.status === PreparationStatus.READY && preparation.discrepancyQuantity === 0);
 }
 
 @Injectable()
@@ -126,9 +130,12 @@ export class DispatchService {
   }
 
   async markReady(id: string, actor?: string) {
-    const dispatchOrder = await this.prisma.dispatchOrder.findUnique({ where: { id }, include: { items: true } });
+    const dispatchOrder = await this.prisma.dispatchOrder.findUnique({ where: { id }, include: { items: true, preparations: true } });
     if (!dispatchOrder) throw new NotFoundException('Dispatch order not found.');
     if (dispatchOrder.items.length === 0) throw new BadRequestException('Dispatch order must have at least one item before loading handoff.');
+    if (!preparationsAllowLoading(dispatchOrder.preparations)) {
+      throw new BadRequestException('Dispatch order needs a ready warehouse preparation without discrepancies before loading handoff.');
+    }
 
     const updated = await this.prisma.dispatchOrder.update({ where: { id }, data: markReadyToLoad(), include: this.dispatchInclude() });
     await this.audit.record({
@@ -154,6 +161,7 @@ export class DispatchService {
         deliveryPlan: true,
         destinationCatalog: true,
         loadOperation: true,
+        preparations: true,
         items: { orderBy: { createdAt: 'asc' }, include: { productCatalog: true } },
       },
     });
@@ -161,6 +169,9 @@ export class DispatchService {
     if (dispatchOrder.loadOperationId) return this.loadOperationSummary(dispatchOrder.loadOperation!);
     if (!ensureDispatchReadyForLoading({ status: dispatchOrder.status, itemCount: dispatchOrder.items.length })) {
       throw new BadRequestException('Dispatch order must be READY_TO_LOAD before creating a load operation.');
+    }
+    if (!preparationsAllowLoading(dispatchOrder.preparations)) {
+      throw new BadRequestException('Ready warehouse preparation is required before creating a load operation.');
     }
 
     const operation = await this.prisma.$transaction(async (tx) => {

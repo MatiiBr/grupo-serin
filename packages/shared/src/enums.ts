@@ -106,6 +106,13 @@ export enum ReservationStatus {
   RELEASED = 'RELEASED',
 }
 
+export enum PreparationStatus {
+  PENDING = 'PENDING',
+  PICKING = 'PICKING',
+  READY = 'READY',
+  DISCREPANCY = 'DISCREPANCY',
+}
+
 export enum AuditAction {
   CREATED = 'CREATED',
   STATUS_CHANGED = 'STATUS_CHANGED',

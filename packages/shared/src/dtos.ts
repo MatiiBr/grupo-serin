@@ -7,6 +7,7 @@ import type {
   OperationStatus,
   OrderStatus,
   PlanStatus,
+  PreparationStatus,
   ProductFamily,
   ReservationStatus,
   SellerPriority,
@@ -351,6 +352,47 @@ export interface CreateReservationDto {
   dispatchOrderId: UUID;
   availability: ReservationAvailabilityDto[];
   externalRef?: string;
+  notes?: string;
+}
+
+export interface PreparationItemDto {
+  id: UUID;
+  preparationId: UUID;
+  reservationItemId: UUID;
+  productCodeSnapshot: string;
+  reservedQuantity: number;
+  readyQuantity: number;
+  discrepancyQuantity: number;
+  discrepancyReason?: string | null;
+}
+
+export interface PreparationDto {
+  id: UUID;
+  reservationId: UUID;
+  dispatchOrderId: UUID;
+  status: PreparationStatus;
+  requestedQuantity: number;
+  reservedQuantity: number;
+  readyQuantity: number;
+  discrepancyQuantity: number;
+  notes?: string | null;
+  createdAt: ISODateString;
+  completedAt?: ISODateString | null;
+  items?: PreparationItemDto[];
+  reservation?: ReservationDto;
+  dispatchOrder?: DispatchOrderDto;
+}
+
+export interface PreparationReadyItemDto {
+  reservationItemId: UUID;
+  readyQuantity: number;
+  discrepancyQuantity?: number;
+  discrepancyReason?: string;
+}
+
+export interface CreatePreparationDto {
+  reservationId: UUID;
+  items: PreparationReadyItemDto[];
   notes?: string;
 }
 

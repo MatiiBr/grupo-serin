@@ -115,6 +115,13 @@ enum ReservationStatus {
   RELEASED
 }
 
+enum PreparationStatus {
+  PENDING
+  PICKING
+  READY
+  DISCREPANCY
+}
+
 enum AuditAction {
   CREATED
   STATUS_CHANGED
@@ -318,6 +325,7 @@ model DispatchOrder {
   loadOperation      LoadOperation?      @relation(fields: [loadOperationId], references: [id], onDelete: SetNull)
   items              DispatchOrderItem[]
   reservations       Reservation[]
+  preparations       Preparation[]
 
   @@index([status])
   @@index([orderId])
@@ -366,6 +374,7 @@ model Reservation {
 
   dispatchOrder DispatchOrder     @relation(fields: [dispatchOrderId], references: [id], onDelete: Restrict)
   items         ReservationItem[]
+  preparation   Preparation?
 
   @@index([dispatchOrderId])
   @@index([status])
@@ -388,10 +397,53 @@ model ReservationItem {
   reservation       Reservation       @relation(fields: [reservationId], references: [id], onDelete: Cascade)
   dispatchOrderItem DispatchOrderItem @relation(fields: [dispatchOrderItemId], references: [id], onDelete: Restrict)
   productCatalog    ProductCatalog    @relation(fields: [productCatalogId], references: [id], onDelete: Restrict)
+  preparationItems   PreparationItem[]
 
   @@unique([reservationId, dispatchOrderItemId])
   @@index([dispatchOrderItemId])
   @@index([productCatalogId])
+}
+
+model Preparation {
+  id                  String            @id @default(uuid())
+  reservationId       String            @unique
+  dispatchOrderId     String
+  status              PreparationStatus @default(PENDING)
+  requestedQuantity   Int               @default(0)
+  reservedQuantity    Int               @default(0)
+  readyQuantity       Int               @default(0)
+  discrepancyQuantity Int               @default(0)
+  notes               String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  completedAt         DateTime?
+
+  reservation   Reservation       @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  dispatchOrder DispatchOrder     @relation(fields: [dispatchOrderId], references: [id], onDelete: Restrict)
+  items         PreparationItem[]
+
+  @@index([dispatchOrderId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model PreparationItem {
+  id                  String   @id @default(uuid())
+  preparationId       String
+  reservationItemId   String
+  productCodeSnapshot String
+  reservedQuantity    Int
+  readyQuantity       Int
+  discrepancyQuantity Int      @default(0)
+  discrepancyReason   String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  preparation    Preparation    @relation(fields: [preparationId], references: [id], onDelete: Cascade)
+  reservationItem ReservationItem @relation(fields: [reservationItemId], references: [id], onDelete: Restrict)
+
+  @@unique([preparationId, reservationItemId])
+  @@index([reservationItemId])
 }
 
 model TruckCatalog {
