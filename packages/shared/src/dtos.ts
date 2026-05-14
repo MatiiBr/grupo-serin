@@ -12,6 +12,7 @@ import type {
   ProductFamily,
   ReservationStatus,
   SellerPriority,
+  TransportExitStatus,
   AuditAction,
   AuditSource,
 } from './enums';
@@ -303,6 +304,7 @@ export interface DispatchOrderDto {
   order?: OrderDto;
   deliveryPlan?: DeliveryPlanDto | null;
   customsRelease?: CustomsReleaseDto | null;
+  transportExit?: TransportExitDto | null;
 }
 
 export interface CreateDeliveryPlanDto {
@@ -422,6 +424,44 @@ export interface ClearCustomsReleaseDto {
 }
 
 export interface BlockCustomsReleaseDto {
+  blockedReason: string;
+  notes?: string;
+}
+
+export interface TransportExitDto {
+  id: UUID;
+  dispatchOrderId: UUID;
+  status: TransportExitStatus;
+  externalRef?: string | null;
+  docsReadyAt?: ISODateString | null;
+  scaleWeightKg?: number | null;
+  scaledAt?: ISODateString | null;
+  authorizedAt?: ISODateString | null;
+  dispatchedAt?: ISODateString | null;
+  blockedReason?: string | null;
+  notes?: string | null;
+  createdAt: ISODateString;
+  dispatchOrder?: DispatchOrderDto;
+}
+
+export interface CreateTransportExitDto {
+  dispatchOrderId: UUID;
+  externalRef?: string;
+  notes?: string;
+}
+
+export interface MarkTransportDocsReadyDto {
+  externalRef?: string;
+  notes?: string;
+}
+
+export interface RecordTransportScaleDto {
+  scaleWeightKg: number;
+  externalRef?: string;
+  notes?: string;
+}
+
+export interface BlockTransportExitDto {
   blockedReason: string;
   notes?: string;
 }

@@ -119,6 +119,15 @@ export enum CustomsReleaseStatus {
   BLOCKED = 'BLOCKED',
 }
 
+export enum TransportExitStatus {
+  PENDING = 'PENDING',
+  DOCS_READY = 'DOCS_READY',
+  SCALED = 'SCALED',
+  AUTHORIZED_EXIT = 'AUTHORIZED_EXIT',
+  DISPATCHED = 'DISPATCHED',
+  BLOCKED = 'BLOCKED',
+}
+
 export enum AuditAction {
   CREATED = 'CREATED',
   STATUS_CHANGED = 'STATUS_CHANGED',

@@ -12,6 +12,7 @@ import { PreparationModule } from './preparation/preparation.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { ReservationsModule } from './reservations/reservations.module';
+import { TransportModule } from './transport/transport.module';
 import { TrucksModule } from './trucks/trucks.module';
 
 @Module({
@@ -27,6 +28,7 @@ import { TrucksModule } from './trucks/trucks.module';
     ProductsModule,
     PreparationModule,
     ReservationsModule,
+    TransportModule,
     OrdersModule,
     LoadingPlansModule,
   ],

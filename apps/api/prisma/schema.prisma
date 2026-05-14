@@ -128,6 +128,15 @@ enum CustomsReleaseStatus {
   BLOCKED
 }
 
+enum TransportExitStatus {
+  PENDING
+  DOCS_READY
+  SCALED
+  AUTHORIZED_EXIT
+  DISPATCHED
+  BLOCKED
+}
+
 enum AuditAction {
   CREATED
   STATUS_CHANGED
@@ -333,6 +342,7 @@ model DispatchOrder {
   reservations       Reservation[]
   preparations       Preparation[]
   customsRelease     CustomsRelease?
+  transportExit      TransportExit?
 
   @@index([status])
   @@index([orderId])
@@ -357,6 +367,29 @@ model CustomsRelease {
   @@index([status])
   @@index([createdAt])
   @@index([clearedAt])
+}
+
+model TransportExit {
+  id              String              @id @default(uuid())
+  dispatchOrderId String              @unique
+  status          TransportExitStatus @default(PENDING)
+  externalRef     String?
+  docsReadyAt     DateTime?
+  scaleWeightKg   Decimal?            @db.Decimal(12, 3)
+  scaledAt        DateTime?
+  authorizedAt    DateTime?
+  dispatchedAt    DateTime?
+  blockedReason   String?
+  notes           String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  dispatchOrder DispatchOrder @relation(fields: [dispatchOrderId], references: [id], onDelete: Restrict)
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([authorizedAt])
+  @@index([dispatchedAt])
 }
 
 model DispatchOrderItem {
