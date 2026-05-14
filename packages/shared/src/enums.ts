@@ -99,6 +99,13 @@ export enum DispatchOrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum ReservationStatus {
+  PENDING = 'PENDING',
+  RESERVED = 'RESERVED',
+  PARTIAL = 'PARTIAL',
+  RELEASED = 'RELEASED',
+}
+
 export enum AuditAction {
   CREATED = 'CREATED',
   STATUS_CHANGED = 'STATUS_CHANGED',

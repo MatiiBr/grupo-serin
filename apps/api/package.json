@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node --watch -r ts-node/register -r tsconfig-paths/register src/main.ts",
     "start": "node dist/main.js",
-    "test": "vitest run src/domain/**/*.spec.ts",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "seed:demo": "ts-node -r tsconfig-paths/register prisma/seed.ts",

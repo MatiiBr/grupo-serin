@@ -8,6 +8,7 @@ import type {
   OrderStatus,
   PlanStatus,
   ProductFamily,
+  ReservationStatus,
   SellerPriority,
   AuditAction,
   AuditSource,
@@ -311,6 +312,45 @@ export interface CreateDispatchOrderDto {
   orderId: UUID;
   code?: string;
   deliveryPlanId?: UUID;
+  notes?: string;
+}
+
+export interface ReservationItemDto {
+  id: UUID;
+  reservationId: UUID;
+  dispatchOrderItemId: UUID;
+  productCatalogId: UUID;
+  productCodeSnapshot: string;
+  requestedQuantity: number;
+  availableQuantity: number;
+  reservedQuantity: number;
+  unreservedQuantity: number;
+}
+
+export interface ReservationDto {
+  id: UUID;
+  dispatchOrderId: UUID;
+  status: ReservationStatus;
+  requestedQuantity: number;
+  reservedQuantity: number;
+  unreservedQuantity: number;
+  externalRef?: string | null;
+  notes?: string | null;
+  createdAt: ISODateString;
+  releasedAt?: ISODateString | null;
+  items?: ReservationItemDto[];
+  dispatchOrder?: DispatchOrderDto;
+}
+
+export interface ReservationAvailabilityDto {
+  dispatchOrderItemId: UUID;
+  availableQuantity: number;
+}
+
+export interface CreateReservationDto {
+  dispatchOrderId: UUID;
+  availability: ReservationAvailabilityDto[];
+  externalRef?: string;
   notes?: string;
 }
 

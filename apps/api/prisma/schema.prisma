@@ -108,6 +108,13 @@ enum DispatchOrderStatus {
   CANCELLED
 }
 
+enum ReservationStatus {
+  PENDING
+  RESERVED
+  PARTIAL
+  RELEASED
+}
+
 enum AuditAction {
   CREATED
   STATUS_CHANGED
@@ -251,6 +258,7 @@ model ProductCatalog {
   operationAssignments OperationProductAssignment[]
   orderItems           OrderItem[]
   dispatchItems        DispatchOrderItem[]
+  reservationItems     ReservationItem[]
 
   @@index([family])
   @@index([description])
@@ -309,6 +317,7 @@ model DispatchOrder {
   destinationCatalog DestinationCatalog? @relation(fields: [destinationCatalogId], references: [id], onDelete: SetNull)
   loadOperation      LoadOperation?      @relation(fields: [loadOperationId], references: [id], onDelete: SetNull)
   items              DispatchOrderItem[]
+  reservations       Reservation[]
 
   @@index([status])
   @@index([orderId])
@@ -335,9 +344,53 @@ model DispatchOrderItem {
   dispatchOrder DispatchOrder  @relation(fields: [dispatchOrderId], references: [id], onDelete: Cascade)
   orderItem     OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
   productCatalog ProductCatalog @relation(fields: [productCatalogId], references: [id], onDelete: Restrict)
+  reservationItems ReservationItem[]
 
   @@unique([dispatchOrderId, orderItemId])
   @@index([orderItemId])
+  @@index([productCatalogId])
+}
+
+model Reservation {
+  id                 String            @id @default(uuid())
+  dispatchOrderId    String
+  status             ReservationStatus @default(PENDING)
+  requestedQuantity  Int               @default(0)
+  reservedQuantity   Int               @default(0)
+  unreservedQuantity Int               @default(0)
+  externalRef        String?
+  notes              String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  releasedAt         DateTime?
+
+  dispatchOrder DispatchOrder     @relation(fields: [dispatchOrderId], references: [id], onDelete: Restrict)
+  items         ReservationItem[]
+
+  @@index([dispatchOrderId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ReservationItem {
+  id                  String   @id @default(uuid())
+  reservationId       String
+  dispatchOrderItemId String
+  productCatalogId    String
+  productCodeSnapshot String
+  requestedQuantity   Int
+  availableQuantity   Int
+  reservedQuantity    Int
+  unreservedQuantity  Int
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  reservation       Reservation       @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  dispatchOrderItem DispatchOrderItem @relation(fields: [dispatchOrderItemId], references: [id], onDelete: Restrict)
+  productCatalog    ProductCatalog    @relation(fields: [productCatalogId], references: [id], onDelete: Restrict)
+
+  @@unique([reservationId, dispatchOrderItemId])
+  @@index([dispatchOrderItemId])
   @@index([productCatalogId])
 }
 
