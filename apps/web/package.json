@@ -17,6 +17,7 @@
     "@vitejs/plugin-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-hook-form": "^7.75.0",
     "react-router-dom": "^7.15.1",
     "three": "^0.184.0",
     "typescript": "latest",
