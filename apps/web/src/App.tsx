@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { NavLink, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from './components/ui';
-import { DispatchPage, LifecyclePage, OrdersPage } from './features/lifecycle/LifecyclePage';
+import { DispatchPage, LifecyclePage, OrdersPage } from './features/lifecycle';
 import { DestinationsPage, OperationPage, OperationsPage, PlannerPage, ProductsPage, ReportPage, TruckPage } from './features/operations';
 import { setNavigateHandler } from './lib/navigation';
 

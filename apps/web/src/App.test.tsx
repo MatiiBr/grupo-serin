@@ -10,6 +10,23 @@ const operationsApiMock = vi.hoisted(() => ({
   get: vi.fn(),
   list: vi.fn(async () => []),
 }));
+const customersApiMock = vi.hoisted(() => ({
+  create: vi.fn(),
+  search: vi.fn(async () => []),
+}));
+const dispatchApiMock = vi.hoisted(() => ({
+  createDispatchOrder: vi.fn(),
+  createLoadOperation: vi.fn(),
+  listDispatchOrders: vi.fn(async () => []),
+  markReady: vi.fn(),
+}));
+const ordersApiMock = vi.hoisted(() => ({
+  create: vi.fn(),
+  dispatchDemand: vi.fn(async () => []),
+  holdCredit: vi.fn(),
+  list: vi.fn(async () => []),
+  releaseCredit: vi.fn(),
+}));
 const trucksApiMock = vi.hoisted(() => ({
   getAssignment: vi.fn(),
   searchCatalog: vi.fn(),
@@ -32,6 +49,15 @@ const productsApiMock = vi.hoisted(() => ({
 
 vi.mock('./api/operations', () => ({
   operationsApi: operationsApiMock,
+}));
+vi.mock('./api/customers', () => ({
+  customersApi: customersApiMock,
+}));
+vi.mock('./api/dispatch', () => ({
+  dispatchApi: dispatchApiMock,
+}));
+vi.mock('./api/orders', () => ({
+  ordersApi: ordersApiMock,
 }));
 vi.mock('./api/trucks', () => ({
   trucksApi: trucksApiMock,
@@ -83,6 +109,31 @@ describe('App routing', () => {
     });
     operationsApiMock.list.mockClear();
 
+    customersApiMock.create.mockReset();
+    customersApiMock.create.mockResolvedValue({ id: 'customer-1' });
+    customersApiMock.search.mockReset();
+    customersApiMock.search.mockResolvedValue([]);
+
+    dispatchApiMock.createDispatchOrder.mockReset();
+    dispatchApiMock.createDispatchOrder.mockResolvedValue({ id: 'dispatch-1' });
+    dispatchApiMock.createLoadOperation.mockReset();
+    dispatchApiMock.createLoadOperation.mockResolvedValue({ id: 'op-1' });
+    dispatchApiMock.listDispatchOrders.mockReset();
+    dispatchApiMock.listDispatchOrders.mockResolvedValue([]);
+    dispatchApiMock.markReady.mockReset();
+    dispatchApiMock.markReady.mockResolvedValue({ id: 'dispatch-1' });
+
+    ordersApiMock.create.mockReset();
+    ordersApiMock.create.mockResolvedValue({ id: 'order-1' });
+    ordersApiMock.dispatchDemand.mockReset();
+    ordersApiMock.dispatchDemand.mockResolvedValue([]);
+    ordersApiMock.holdCredit.mockReset();
+    ordersApiMock.holdCredit.mockResolvedValue({ id: 'order-1' });
+    ordersApiMock.list.mockReset();
+    ordersApiMock.list.mockResolvedValue([]);
+    ordersApiMock.releaseCredit.mockReset();
+    ordersApiMock.releaseCredit.mockResolvedValue({ id: 'order-1' });
+
     trucksApiMock.searchCatalog.mockReset();
     trucksApiMock.searchCatalog.mockResolvedValue([{ id: 'truck-1', plate: 'ABC123', loadingMethod: 'SIDE', lengthMm: 12000, widthMm: 2400 }]);
     trucksApiMock.searchTrailers.mockReset();
@@ -111,6 +162,24 @@ describe('App routing', () => {
     renderApp('/operations');
 
     expect(await screen.findByRole('heading', { name: /nueva operacion/i })).toBeInTheDocument();
+  });
+
+  it('renders the lifecycle route', async () => {
+    renderApp('/lifecycle');
+
+    expect(await screen.findByRole('heading', { name: /puente operativo/i })).toBeInTheDocument();
+  });
+
+  it('renders the orders route', async () => {
+    renderApp('/orders');
+
+    expect(await screen.findByRole('heading', { name: /alta cliente/i })).toBeInTheDocument();
+  });
+
+  it('renders the dispatch route', async () => {
+    renderApp('/dispatch');
+
+    expect(await screen.findByRole('heading', { name: /demanda liberada/i })).toBeInTheDocument();
   });
 
   it('renders the not-found route', () => {
