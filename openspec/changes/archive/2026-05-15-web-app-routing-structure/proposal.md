@@ -19,7 +19,7 @@ Reduce frontend architecture debt by separating React bootstrap, shell routing, 
 ## Capabilities
 
 ### New Capabilities
-- None
+- `web-routing`: Web application route composition and navigation shell.
 
 ### Modified Capabilities
 - None

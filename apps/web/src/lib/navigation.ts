@@ -1,4 +1,14 @@
+let navigateHandler: ((path: string) => void) | null = null;
+
+export function setNavigateHandler(handler: ((path: string) => void) | null) {
+  navigateHandler = handler;
+}
+
 export function navigate(path: string) {
-  window.history.pushState(null, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  if (navigateHandler) {
+    navigateHandler(path);
+    return;
+  }
+
+  window.location.assign(path);
 }
