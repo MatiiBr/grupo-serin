@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { destinationsApi } from '../../../api/destinations';
 import { productsApi } from '../../../api/products';
+import { queryKeys } from '../../../api/queryKeys';
 import { MutationError, QueryState, SectionTitle } from '../../../components/ui';
 import { formatProductDimensions } from '../../../lib/formatters';
 import { handleProductAssignmentSubmit, OperationHeader, ProductAssignmentList } from '../components/operation-ui';
@@ -9,17 +10,17 @@ import { useDeleteMutation, useOperation } from '../hooks/operationHooks';
 export function ProductsPage({ operationId }: { operationId: string }) {
   const queryClient = useQueryClient();
   const operation = useOperation(operationId);
-  const destinations = useQuery({ queryKey: ['destination-assignments', operationId], queryFn: () => destinationsApi.listAssignments(operationId) });
-  const catalog = useQuery({ queryKey: ['product-catalog'], queryFn: () => productsApi.searchCatalog() });
-  const products = useQuery({ queryKey: ['product-assignments', operationId], queryFn: () => productsApi.listAssignments(operationId) });
+  const destinations = useQuery({ queryKey: queryKeys.destinationAssignments.list(operationId), queryFn: () => destinationsApi.listAssignments(operationId) });
+  const catalog = useQuery({ queryKey: queryKeys.productCatalog.search(), queryFn: () => productsApi.searchCatalog() });
+  const products = useQuery({ queryKey: queryKeys.productAssignments.list(operationId), queryFn: () => productsApi.listAssignments(operationId) });
   const createProduct = useMutation({
     mutationFn: productsApi.createAssignment.bind(null, operationId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['product-assignments', operationId] });
-      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.productAssignments.list(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
-  const deleteProduct = useDeleteMutation((id: string) => productsApi.removeAssignment(id), ['product-assignments', operationId], ['operation', operationId]);
+  const deleteProduct = useDeleteMutation((id: string) => productsApi.removeAssignment(id), queryKeys.productAssignments.list(operationId), queryKeys.operations.detail(operationId));
 
   return (
     <main className="stack">

@@ -1,6 +1,7 @@
 import { PlanStatus } from '@camiones/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { loadingPlansApi } from '../../../api/loading-plans';
+import { queryKeys } from '../../../api/queryKeys';
 import { EmptyState, MutationError, QueryState } from '../../../components/ui';
 import { navigate } from '../../../lib/navigation';
 import { OperationHeader } from '../components/operation-ui';
@@ -10,19 +11,19 @@ import { useOperation } from '../hooks/operationHooks';
 export function PlannerPage({ operationId }: { operationId: string }) {
   const queryClient = useQueryClient();
   const operation = useOperation(operationId);
-  const currentPlan = useQuery({ queryKey: ['loading-plan', operationId], queryFn: () => loadingPlansApi.current(operationId) });
+  const currentPlan = useQuery({ queryKey: queryKeys.loadingPlan.current(operationId), queryFn: () => loadingPlansApi.current(operationId) });
   const generatePlan = useMutation({
     mutationFn: () => loadingPlansApi.generate(operationId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['loading-plan', operationId] });
-      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.loadingPlan.current(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
   const approvePlan = useMutation({
     mutationFn: (planId: string) => loadingPlansApi.approve(planId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['loading-plan', operationId] });
-      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.loadingPlan.current(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
   const plan = generatePlan.data ?? currentPlan.data;

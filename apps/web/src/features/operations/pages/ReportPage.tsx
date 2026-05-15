@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { loadingPlansApi } from '../../../api/loading-plans';
+import { queryKeys } from '../../../api/queryKeys';
 import { EmptyState, QueryState } from '../../../components/ui';
 import { OperationalReport } from '../components/report-ui';
 
 export function ReportPage({ operationId }: { operationId: string }) {
-  const currentPlan = useQuery({ queryKey: ['loading-plan', operationId], queryFn: () => loadingPlansApi.current(operationId) });
+  const currentPlan = useQuery({ queryKey: queryKeys.loadingPlan.current(operationId), queryFn: () => loadingPlansApi.current(operationId) });
   const planId = currentPlan.data?.id;
   const report = useQuery({
-    queryKey: ['loading-plan-report', planId],
+    queryKey: queryKeys.loadingPlan.report(planId),
     queryFn: () => loadingPlansApi.report(planId!),
     enabled: Boolean(planId),
   });

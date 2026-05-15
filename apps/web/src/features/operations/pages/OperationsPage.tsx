@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { operationsApi } from '../../../api/operations';
+import { queryKeys } from '../../../api/queryKeys';
 import { MutationError, QueryState, SectionTitle } from '../../../components/ui';
 import { optionalText } from '../../../lib/forms';
 import { navigate } from '../../../lib/navigation';
@@ -7,11 +8,11 @@ import { OperationRow } from '../components/operation-ui';
 
 export function OperationsPage() {
   const queryClient = useQueryClient();
-  const operations = useQuery({ queryKey: ['operations'], queryFn: operationsApi.list });
+  const operations = useQuery({ queryKey: queryKeys.operations.list(), queryFn: operationsApi.list });
   const createOperation = useMutation({
     mutationFn: operationsApi.create,
     onSuccess: (operation) => {
-      void queryClient.invalidateQueries({ queryKey: ['operations'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.list() });
       navigate(`/operations/${operation.id}`);
     },
   });

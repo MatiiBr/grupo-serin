@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { destinationsApi } from '../../../api/destinations';
+import { queryKeys } from '../../../api/queryKeys';
 import { MutationError, QueryState, SectionTitle } from '../../../components/ui';
 import { DestinationList, handleDestinationAssignmentSubmit, nextDestinationOrder, OperationHeader } from '../components/operation-ui';
 import { useDeleteMutation, useOperation } from '../hooks/operationHooks';
@@ -7,24 +8,24 @@ import { useDeleteMutation, useOperation } from '../hooks/operationHooks';
 export function DestinationsPage({ operationId }: { operationId: string }) {
   const queryClient = useQueryClient();
   const operation = useOperation(operationId);
-  const catalog = useQuery({ queryKey: ['destination-catalog'], queryFn: () => destinationsApi.searchCatalog() });
-  const destinations = useQuery({ queryKey: ['destination-assignments', operationId], queryFn: () => destinationsApi.listAssignments(operationId) });
+  const catalog = useQuery({ queryKey: queryKeys.destinationCatalog.search(), queryFn: () => destinationsApi.searchCatalog() });
+  const destinations = useQuery({ queryKey: queryKeys.destinationAssignments.list(operationId), queryFn: () => destinationsApi.listAssignments(operationId) });
   const createDestination = useMutation({
     mutationFn: (payload: Omit<Parameters<typeof destinationsApi.createAssignment>[1], 'unloadingOrder'>) =>
       destinationsApi.createAssignment(operationId, { ...payload, unloadingOrder: nextDestinationOrder(destinations.data ?? []) }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['destination-assignments', operationId] });
-      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.destinationAssignments.list(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
   const reorderDestinations = useMutation({
     mutationFn: (ids: string[]) => destinationsApi.reorderAssignments(operationId, ids),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['destination-assignments', operationId] });
-      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.destinationAssignments.list(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
-  const deleteDestination = useDeleteMutation((id: string) => destinationsApi.removeAssignment(id), ['destination-assignments', operationId], ['operation', operationId]);
+  const deleteDestination = useDeleteMutation((id: string) => destinationsApi.removeAssignment(id), queryKeys.destinationAssignments.list(operationId), queryKeys.operations.detail(operationId));
 
   return (
     <main className="stack">

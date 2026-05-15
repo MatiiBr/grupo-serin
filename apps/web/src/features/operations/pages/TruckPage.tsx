@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../../api/queryKeys';
 import { trucksApi } from '../../../api/trucks';
 import { MutationError, QueryState, SectionTitle } from '../../../components/ui';
 import { optionalText, requiredText } from '../../../lib/forms';
@@ -8,14 +9,14 @@ import { useOperation } from '../hooks/operationHooks';
 export function TruckPage({ operationId }: { operationId: string }) {
   const queryClient = useQueryClient();
   const operation = useOperation(operationId);
-  const trucks = useQuery({ queryKey: ['truck-catalog'], queryFn: () => trucksApi.searchCatalog() });
-  const trailers = useQuery({ queryKey: ['trailer-catalog'], queryFn: () => trucksApi.searchTrailers() });
-  const vehicle = useQuery({ queryKey: ['vehicle-assignment', operationId], queryFn: () => trucksApi.getAssignment(operationId) });
+  const trucks = useQuery({ queryKey: queryKeys.truckCatalog.search(), queryFn: () => trucksApi.searchCatalog() });
+  const trailers = useQuery({ queryKey: queryKeys.trailerCatalog.search(), queryFn: () => trucksApi.searchTrailers() });
+  const vehicle = useQuery({ queryKey: queryKeys.vehicleAssignment.detail(operationId), queryFn: () => trucksApi.getAssignment(operationId) });
   const saveVehicle = useMutation({
     mutationFn: trucksApi.upsertAssignment.bind(null, operationId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['vehicle-assignment', operationId] });
-      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vehicleAssignment.detail(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
 

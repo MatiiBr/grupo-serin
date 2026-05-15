@@ -5,6 +5,7 @@ import { dispatchApi } from '../../api/dispatch';
 import { operationsApi } from '../../api/operations';
 import { ordersApi } from '../../api/orders';
 import { productsApi } from '../../api/products';
+import { queryKeys } from '../../api/queryKeys';
 import type { DispatchOrder, Order, ProductCatalog } from '../../api/types';
 import { MutationError, QueryState, SectionTitle } from '../../components/ui';
 import { optionalDate, optionalInteger, optionalText, requiredText } from '../../lib/forms';
@@ -12,9 +13,9 @@ import { formatDateMaybe } from '../../lib/formatters';
 import { navigate } from '../../lib/navigation';
 
 export function LifecyclePage() {
-  const orders = useQuery({ queryKey: ['orders'], queryFn: ordersApi.list });
-  const dispatchOrders = useQuery({ queryKey: ['dispatch-orders'], queryFn: dispatchApi.listDispatchOrders });
-  const operations = useQuery({ queryKey: ['operations'], queryFn: operationsApi.list });
+  const orders = useQuery({ queryKey: queryKeys.orders.list(), queryFn: ordersApi.list });
+  const dispatchOrders = useQuery({ queryKey: queryKeys.dispatchOrders.list(), queryFn: dispatchApi.listDispatchOrders });
+  const operations = useQuery({ queryKey: queryKeys.operations.list(), queryFn: operationsApi.list });
 
   return (
     <main className="grid two">
@@ -46,18 +47,18 @@ export function LifecyclePage() {
 
 export function OrdersPage() {
   const queryClient = useQueryClient();
-  const customers = useQuery({ queryKey: ['customers'], queryFn: () => customersApi.search() });
-  const products = useQuery({ queryKey: ['product-catalog'], queryFn: () => productsApi.searchCatalog() });
-  const orders = useQuery({ queryKey: ['orders'], queryFn: ordersApi.list });
+  const customers = useQuery({ queryKey: queryKeys.customers.search(), queryFn: () => customersApi.search() });
+  const products = useQuery({ queryKey: queryKeys.productCatalog.search(), queryFn: () => productsApi.searchCatalog() });
+  const orders = useQuery({ queryKey: queryKeys.orders.list(), queryFn: ordersApi.list });
   const createCustomer = useMutation({
     mutationFn: customersApi.create,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['customers'] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.customers.search() }),
   });
   const createOrder = useMutation({
     mutationFn: ordersApi.create,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['orders'] });
-      void queryClient.invalidateQueries({ queryKey: ['dispatch-demand'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.orders.list() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dispatchDemand.list() });
     },
   });
   const holdCredit = useOrderStatusMutation(ordersApi.holdCredit);
@@ -110,21 +111,21 @@ export function OrdersPage() {
 
 export function DispatchPage() {
   const queryClient = useQueryClient();
-  const demand = useQuery({ queryKey: ['dispatch-demand'], queryFn: ordersApi.dispatchDemand });
-  const dispatchOrders = useQuery({ queryKey: ['dispatch-orders'], queryFn: dispatchApi.listDispatchOrders });
+  const demand = useQuery({ queryKey: queryKeys.dispatchDemand.list(), queryFn: ordersApi.dispatchDemand });
+  const dispatchOrders = useQuery({ queryKey: queryKeys.dispatchOrders.list(), queryFn: dispatchApi.listDispatchOrders });
   const createDispatchOrder = useMutation({
     mutationFn: dispatchApi.createDispatchOrder,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['dispatch-orders'] });
-      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dispatchOrders.list() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.orders.list() });
     },
   });
   const markReady = useDispatchMutation(dispatchApi.markReady);
   const createLoadOperation = useMutation({
     mutationFn: dispatchApi.createLoadOperation,
     onSuccess: (operation) => {
-      void queryClient.invalidateQueries({ queryKey: ['dispatch-orders'] });
-      void queryClient.invalidateQueries({ queryKey: ['operations'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dispatchOrders.list() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.list() });
       navigate(`/operations/${operation.id}`);
     },
   });
@@ -170,8 +171,8 @@ function useOrderStatusMutation(mutationFn: (id: string) => Promise<Order>) {
   return useMutation({
     mutationFn,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['orders'] });
-      void queryClient.invalidateQueries({ queryKey: ['dispatch-demand'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.orders.list() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dispatchDemand.list() });
     },
   });
 }
@@ -180,7 +181,7 @@ function useDispatchMutation(mutationFn: (id: string) => Promise<DispatchOrder>)
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['dispatch-orders'] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.dispatchOrders.list() }),
   });
 }
 
