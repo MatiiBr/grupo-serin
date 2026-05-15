@@ -14,14 +14,14 @@ testing:
   strict_tdd: true
   test_runner:
     framework: vitest
-    command: "npm run test:api"
+    command: "npm run test:api && npm run test --workspace @camiones/web"
   layers:
     unit:
       available: true
       tool: vitest
     integration:
       available: true
-      tool: "@nestjs/testing + Vitest"
+      tool: "@nestjs/testing + Vitest; Testing Library + jsdom"
     e2e:
       available: false
       tool: null
