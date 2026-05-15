@@ -10,9 +10,37 @@ const operationsApiMock = vi.hoisted(() => ({
   get: vi.fn(),
   list: vi.fn(async () => []),
 }));
+const trucksApiMock = vi.hoisted(() => ({
+  getAssignment: vi.fn(),
+  searchCatalog: vi.fn(),
+  searchTrailers: vi.fn(),
+  upsertAssignment: vi.fn(),
+}));
+const destinationsApiMock = vi.hoisted(() => ({
+  createAssignment: vi.fn(),
+  listAssignments: vi.fn(),
+  removeAssignment: vi.fn(),
+  reorderAssignments: vi.fn(),
+  searchCatalog: vi.fn(),
+}));
+const productsApiMock = vi.hoisted(() => ({
+  createAssignment: vi.fn(),
+  listAssignments: vi.fn(),
+  removeAssignment: vi.fn(),
+  searchCatalog: vi.fn(),
+}));
 
 vi.mock('./api/operations', () => ({
   operationsApi: operationsApiMock,
+}));
+vi.mock('./api/trucks', () => ({
+  trucksApi: trucksApiMock,
+}));
+vi.mock('./api/destinations', () => ({
+  destinationsApi: destinationsApiMock,
+}));
+vi.mock('./api/products', () => ({
+  productsApi: productsApiMock,
 }));
 
 function renderApp(route: string) {
@@ -54,6 +82,29 @@ describe('App routing', () => {
       latestPlan: null,
     });
     operationsApiMock.list.mockClear();
+
+    trucksApiMock.searchCatalog.mockReset();
+    trucksApiMock.searchCatalog.mockResolvedValue([{ id: 'truck-1', plate: 'ABC123', loadingMethod: 'SIDE', lengthMm: 12000, widthMm: 2400 }]);
+    trucksApiMock.searchTrailers.mockReset();
+    trucksApiMock.searchTrailers.mockResolvedValue([{ id: 'trailer-1', code: 'TRL1', lengthMm: 8000, widthMm: 2400 }]);
+    trucksApiMock.getAssignment.mockReset();
+    trucksApiMock.getAssignment.mockResolvedValue(null);
+    trucksApiMock.upsertAssignment.mockReset();
+    trucksApiMock.upsertAssignment.mockResolvedValue({ id: 'vehicle-1' });
+
+    destinationsApiMock.searchCatalog.mockReset();
+    destinationsApiMock.searchCatalog.mockResolvedValue([{ id: 'dest-1', name: 'Obra Norte', code: 'ON' }]);
+    destinationsApiMock.listAssignments.mockReset();
+    destinationsApiMock.listAssignments.mockResolvedValue([{ id: 'op-dest-1', destinationCatalogId: 'dest-1', unloadingOrder: 1, notes: null, catalog: { name: 'Obra Norte', code: 'ON' } }]);
+    destinationsApiMock.createAssignment.mockReset();
+    destinationsApiMock.createAssignment.mockResolvedValue({ id: 'op-dest-2' });
+
+    productsApiMock.searchCatalog.mockReset();
+    productsApiMock.searchCatalog.mockResolvedValue([{ id: 'prod-1', code: 'SKU1', family: 'STEEL_BAR', lengthMm: 1000, widthMm: 100, heightMm: 100 }]);
+    productsApiMock.listAssignments.mockReset();
+    productsApiMock.listAssignments.mockResolvedValue([]);
+    productsApiMock.createAssignment.mockReset();
+    productsApiMock.createAssignment.mockResolvedValue({ id: 'op-prod-1' });
   });
 
   it('renders the operations route', async () => {
@@ -86,6 +137,71 @@ describe('App routing', () => {
       name: 'Carga obra norte',
       notes: 'Turno manana',
       scheduledAt: new Date('2026-05-20T09:30').toISOString(),
+    });
+  });
+
+  it('submits the vehicle assignment form payload', async () => {
+    const user = userEvent.setup();
+    renderApp('/operations/op-1/truck');
+
+    await user.selectOptions(await screen.findByLabelText(/camion de catalogo/i), 'truck-1');
+    await user.selectOptions(screen.getByLabelText(/acoplado/i), 'trailer-1');
+    await user.type(screen.getByLabelText(/notas operativas/i), ' Con acoplado ');
+    await user.click(screen.getByRole('button', { name: /asignar vehiculo/i }));
+
+    await waitFor(() => expect(trucksApiMock.upsertAssignment).toHaveBeenCalledTimes(1));
+    expect(trucksApiMock.upsertAssignment.mock.calls[0]?.[0]).toBe('op-1');
+    expect(trucksApiMock.upsertAssignment.mock.calls[0]?.[1]).toEqual({
+      truckCatalogId: 'truck-1',
+      trailerCatalogId: 'trailer-1',
+      notes: 'Con acoplado',
+    });
+  });
+
+  it('submits the destination assignment form payload', async () => {
+    const user = userEvent.setup();
+    renderApp('/operations/op-1/destinations');
+
+    await user.selectOptions(await screen.findByLabelText(/destino de catalogo/i), 'dest-1');
+    await user.type(screen.getByLabelText(/notas de operacion/i), ' Primer punto ');
+    await user.click(screen.getByRole('button', { name: /asignar destino/i }));
+
+    await waitFor(() => expect(destinationsApiMock.createAssignment).toHaveBeenCalledTimes(1));
+    expect(destinationsApiMock.createAssignment.mock.calls[0]?.[0]).toBe('op-1');
+    expect(destinationsApiMock.createAssignment.mock.calls[0]?.[1]).toEqual({
+      destinationCatalogId: 'dest-1',
+      unloadingOrder: 2,
+      notes: 'Primer punto',
+    });
+  });
+
+  it('submits the product assignment form payload', async () => {
+    const user = userEvent.setup();
+    renderApp('/operations/op-1/products');
+
+    await user.selectOptions(await screen.findByLabelText(/producto de catalogo/i), 'prod-1');
+    await user.selectOptions(screen.getByLabelText(/^destino$/i), 'op-dest-1');
+    await user.clear(screen.getByLabelText(/cantidad/i));
+    await user.type(screen.getByLabelText(/cantidad/i), '3');
+    await user.type(screen.getByLabelText(/peso override kg/i), '120.5');
+    await user.type(screen.getByLabelText(/largo override mm/i), '2000');
+    await user.click(screen.getByLabelText(/forzar apilable/i));
+    await user.type(screen.getByLabelText(/notas operativas/i), ' Urgente ');
+    await user.click(screen.getByRole('button', { name: /asignar producto/i }));
+
+    await waitFor(() => expect(productsApiMock.createAssignment).toHaveBeenCalledTimes(1));
+    expect(productsApiMock.createAssignment.mock.calls[0]?.[0]).toBe('op-1');
+    expect(productsApiMock.createAssignment.mock.calls[0]?.[1]).toEqual({
+      productCatalogId: 'prod-1',
+      operationDestinationId: 'op-dest-1',
+      quantity: 3,
+      weightKgOverride: 120.5,
+      lengthMmOverride: 2000,
+      widthMmOverride: undefined,
+      heightMmOverride: undefined,
+      stackableOverride: true,
+      rotationAllowedOverride: undefined,
+      notes: 'Urgente',
     });
   });
 });
