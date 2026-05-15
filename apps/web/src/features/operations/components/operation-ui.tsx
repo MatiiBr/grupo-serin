@@ -1,9 +1,6 @@
 import { useLocation } from 'react-router-dom';
-import { destinationsApi } from '../../../api/destinations';
-import { productsApi } from '../../../api/products';
 import type { LoadingPlan, OperationDestinationAssignment, OperationDetail, OperationProductAssignment, OperationSummary, OperationVehicleAssignment } from '../../../api/types';
 import { SectionTitle } from '../../../components/ui';
-import { optionalInteger, optionalNumber, optionalText, requiredText } from '../../../lib/forms';
 import { formatAssignmentWeight, formatDate, formatNumber, formatProductDimensions } from '../../../lib/formatters';
 import { navigate } from '../../../lib/navigation';
 
@@ -95,37 +92,9 @@ export function DataTable({ title, headers, rows }: { title: string; headers: st
   return <div className="card"><SectionTitle title={title} subtitle={`${rows.length} registros`} /><div className="table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${title}-${index}`}>{row.map((cell, cellIndex) => <td key={`${title}-${index}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody></table></div></div>;
 }
 
-export function handleDestinationAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Omit<Parameters<typeof destinationsApi.createAssignment>[1], 'unloadingOrder'>) => void) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  submit({
-    destinationCatalogId: requiredText(form, 'destinationCatalogId'),
-    notes: optionalText(form, 'notes'),
-  });
-  event.currentTarget.reset();
-}
-
 export function nextDestinationOrder(items: OperationDestinationAssignment[]) {
   if (items.length === 0) return 1;
   return Math.max(...items.map((item) => item.unloadingOrder)) + 1;
-}
-
-export function handleProductAssignmentSubmit(event: React.FormEvent<HTMLFormElement>, submit: (payload: Parameters<typeof productsApi.createAssignment>[1]) => void) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  submit({
-    productCatalogId: requiredText(form, 'productCatalogId'),
-    operationDestinationId: optionalText(form, 'operationDestinationId') ?? null,
-    quantity: optionalInteger(form, 'quantity'),
-    weightKgOverride: optionalNumber(form, 'weightKgOverride'),
-    lengthMmOverride: optionalInteger(form, 'lengthMmOverride'),
-    widthMmOverride: optionalInteger(form, 'widthMmOverride'),
-    heightMmOverride: optionalInteger(form, 'heightMmOverride'),
-    stackableOverride: optionalCheckedOverride(form, 'stackableOverride'),
-    rotationAllowedOverride: optionalCheckedOverride(form, 'rotationAllowedOverride'),
-    notes: optionalText(form, 'notes'),
-  });
-  event.currentTarget.reset();
 }
 
 function moveDestination(items: OperationDestinationAssignment[], index: number, direction: -1 | 1) {
@@ -133,8 +102,4 @@ function moveDestination(items: OperationDestinationAssignment[], index: number,
   const targetIndex = index + direction;
   [nextItems[index], nextItems[targetIndex]] = [nextItems[targetIndex], nextItems[index]];
   return nextItems.map((item) => item.id);
-}
-
-function optionalCheckedOverride(form: FormData, key: string) {
-  return form.get(key) === 'on' ? true : undefined;
 }
