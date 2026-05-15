@@ -188,6 +188,56 @@ describe('App routing', () => {
     expect(screen.getByText(/ruta no encontrada/i)).toBeInTheDocument();
   });
 
+  it('submits the customer form payload', async () => {
+    const user = userEvent.setup();
+    renderApp('/orders');
+
+    await user.type(await screen.findByLabelText(/codigo cliente/i), ' CLI-ACME ');
+    await user.type(screen.getByLabelText(/razon social/i), ' Aceros del Norte ');
+    await user.type(screen.getByLabelText(/cuit/i), ' 30-12345678-9 ');
+    await user.type(screen.getAllByLabelText(/notas/i)[0], ' Cliente estrategico ');
+    await user.click(screen.getByRole('button', { name: /crear cliente/i }));
+
+    await waitFor(() => expect(customersApiMock.create).toHaveBeenCalledTimes(1));
+    expect(customersApiMock.create.mock.calls[0]?.[0]).toEqual({
+      code: 'CLI-ACME',
+      name: 'Aceros del Norte',
+      taxId: '30-12345678-9',
+      notes: 'Cliente estrategico',
+    });
+  });
+
+  it('submits the order form payload with product fallback', async () => {
+    const user = userEvent.setup();
+    customersApiMock.search.mockResolvedValue([{ id: 'customer-1', code: 'CLI-ACME', name: 'Aceros del Norte', status: 'ACTIVE' }] as never);
+    renderApp('/orders');
+
+    await user.selectOptions(await screen.findByLabelText(/^cliente$/i), 'customer-1');
+    await user.selectOptions(screen.getByLabelText(/prioridad/i), 'HIGH');
+    await user.selectOptions(screen.getByLabelText(/producto catalogo/i), 'prod-1');
+    await user.type(screen.getByLabelText(/destino snapshot/i), ' Obra Norte ');
+    await user.type(screen.getByLabelText(/entrega solicitada/i), '2026-05-20T09:30');
+    await user.clear(screen.getByLabelText(/cantidad/i));
+    await user.type(screen.getByLabelText(/cantidad/i), '4');
+    await user.type(screen.getAllByLabelText(/notas/i)[1], ' Prioritario ');
+    await user.click(screen.getByRole('button', { name: /crear pedido/i }));
+
+    await waitFor(() => expect(ordersApiMock.create).toHaveBeenCalledTimes(1));
+    expect(ordersApiMock.create.mock.calls[0]?.[0]).toEqual({
+      customerId: 'customer-1',
+      sellerPriority: 'HIGH',
+      destinationName: 'Obra Norte',
+      requestedDeliveryAt: new Date('2026-05-20T09:30').toISOString(),
+      notes: 'Prioritario',
+      items: [{
+        productCatalogId: 'prod-1',
+        productCode: 'SKU1',
+        description: undefined,
+        quantity: 4,
+      }],
+    });
+  });
+
   it('submits the operation form payload', async () => {
     const user = userEvent.setup();
     renderApp('/operations');
