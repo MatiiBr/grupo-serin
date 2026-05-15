@@ -114,6 +114,25 @@ h2 { margin-bottom: 6px; color: #fff7e8; }
 .matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .wide { grid-column: 1 / -1; }
 label { display: grid; gap: 7px; color: #d8c8ad; font-size: .88rem; }
+fieldset {
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+legend {
+  margin-bottom: 7px;
+  color: #d8c8ad;
+  font-size: .88rem;
+}
+
+.date-time-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(120px, .6fr);
+  gap: 10px;
+}
+
 input, select, textarea {
   width: 100%;
   border: 1px solid rgba(255,255,255,.15);
@@ -394,7 +413,7 @@ td { color: #eadbc1; }
 .print-report .truck-map { height: 260px; margin-bottom: 14px; border-color: #201a13; background-color: rgba(255,255,255,.45); }
 
 @media (max-width: 860px) {
-  .two, .four, .wide-left, .matrix, .simulation-layout, .report-grid { grid-template-columns: 1fr; }
+  .two, .four, .wide-left, .matrix, .simulation-layout, .report-grid, .date-time-field { grid-template-columns: 1fr; }
   .simulation-side { grid-template-columns: 1fr; }
   .selected-panel { grid-column: auto; }
   .adjust-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }

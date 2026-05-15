@@ -1,4 +1,6 @@
 export const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+const API_ACTOR = import.meta.env.VITE_API_ACTOR ?? 'web:demo-user';
+const API_ROLE = import.meta.env.VITE_API_ROLE ?? 'LOGISTICS_MANAGER';
 
 export class ApiError extends Error {
   constructor(
@@ -17,6 +19,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      'x-actor': API_ACTOR,
+      'x-role': API_ROLE,
       ...headers,
     },
   });

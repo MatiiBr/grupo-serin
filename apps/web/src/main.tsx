@@ -12,7 +12,7 @@ import { productsApi } from './api/products';
 import { trucksApi } from './api/trucks';
 import type { LoadingPlan, OperationDestinationAssignment, OperationDetail, OperationProductAssignment, OperationSummary, OperationVehicleAssignment, PlacedItem, PlanAlert, Truck } from './api/types';
 import { EmptyState, MutationError, QueryState, SectionTitle } from './components/ui';
-import { optionalDate, optionalInteger, optionalNumber, optionalText, requiredInteger, requiredText } from './lib/forms';
+import { optionalInteger, optionalNumber, optionalText, requiredInteger, requiredText } from './lib/forms';
 import { formatAssignmentWeight, formatDate, formatNumber, formatProductDimensions } from './lib/formatters';
 import { navigate } from './lib/navigation';
 import './styles.css';
@@ -115,17 +115,23 @@ function OperationsPage() {
           onSubmit={(event) => {
             event.preventDefault();
             const form = new FormData(event.currentTarget);
+            const scheduledDate = optionalText(form, 'scheduledDate');
+            const scheduledTime = optionalText(form, 'scheduledTime') ?? '00:00';
             createOperation.mutate({
               code: optionalText(form, 'code'),
               name: optionalText(form, 'name'),
               notes: optionalText(form, 'notes'),
-              scheduledAt: optionalDate(form, 'scheduledAt'),
+              scheduledAt: scheduledDate ? new Date(`${scheduledDate}T${scheduledTime}`).toISOString() : undefined,
             });
           }}
         >
           <label>Codigo<input name="code" placeholder="OP-2026-001" /></label>
           <label>Nombre<input name="name" placeholder="Carga obra norte" /></label>
-          <label>Programada<input name="scheduledAt" type="datetime-local" /></label>
+          <fieldset className="date-time-field">
+            <legend>Programada</legend>
+            <label>Fecha<input name="scheduledDate" type="date" /></label>
+            <label>Hora<input name="scheduledTime" type="time" defaultValue="08:00" /></label>
+          </fieldset>
           <label>Notas<textarea name="notes" rows={3} /></label>
           <button disabled={createOperation.isPending}>Crear operacion</button>
           <MutationError error={createOperation.error} />
