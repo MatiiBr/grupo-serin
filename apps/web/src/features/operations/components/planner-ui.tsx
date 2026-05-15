@@ -3,14 +3,22 @@ import { Canvas } from '@react-three/fiber';
 import { Edges, OrbitControls, Text } from '@react-three/drei';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
 import { loadingPlansApi } from '../../../api/loading-plans';
 import { queryKeys } from '../../../api/queryKeys';
-import type { LoadingPlan, PlacedItem, PlanAlert, Truck } from '../../../api/types';
+import type { AdjustPlacedItemPayload, LoadingPlan, PlacedItem, PlanAlert, Truck } from '../../../api/types';
 import { MutationError, SectionTitle } from '../../../components/ui';
-import { requiredInteger } from '../../../lib/forms';
 import { DataTable, MetricGrid } from './operation-ui';
 
 type ItemAlertStatus = 'critical' | 'warning' | undefined;
+
+export interface PlacedItemAdjustmentFormValues {
+  xMm: string;
+  yMm: string;
+  zMm: string;
+  rotationDeg: string;
+  locked?: boolean;
+}
 
 export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; operationId: string; truck: Truck | null }) {
   const queryClient = useQueryClient();
@@ -185,9 +193,23 @@ function StepInstructionPanel({ step, maxStep, viewAll, visibleCount, criticalCo
 }
 
 function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, onSave }: { item: PlacedItem | null; sequence?: number; alerts: PlanAlert[]; readOnly: boolean; isSaving: boolean; error: Error | null; onSave: (itemId: string, payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2]) => void }) {
+  const { handleSubmit, register, reset } = useForm<PlacedItemAdjustmentFormValues>();
+
+  useEffect(() => {
+    if (!item) return;
+    reset({
+      xMm: item.xMm.toString(),
+      yMm: item.yMm.toString(),
+      zMm: item.zMm.toString(),
+      rotationDeg: item.rotationDeg.toString(),
+      locked: item.locked,
+    });
+  }, [item, reset]);
+
   if (!item) return <div className="selected-panel"><strong>Seleccion de bulto</strong><p className="muted">Elegi un bloque en la escena 3D para ver posicion y dimensiones.</p></div>;
   const criticalAlerts = alerts.filter((alert) => alert.severity === 'CRITICAL');
   const warningAlerts = alerts.filter((alert) => alert.severity === 'WARNING');
+  const onSubmit = handleSubmit((values) => onSave(item.id, buildPlacedItemAdjustmentPayload(values)));
   const rows = [
     ['Paso', sequence ? `#${sequence}` : '-'],
     ['Codigo', item.productCode],
@@ -208,28 +230,32 @@ function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, 
       {readOnly ? <p className="approved-copy">Plan aprobado: no se permiten ajustes manuales.</p> : <form
         className="adjust-form"
         key={item.id}
-        onSubmit={(event) => {
-          event.preventDefault();
-          const form = new FormData(event.currentTarget);
-          onSave(item.id, {
-            xMm: requiredInteger(form, 'xMm'),
-            yMm: requiredInteger(form, 'yMm'),
-            zMm: requiredInteger(form, 'zMm'),
-            rotationDeg: requiredInteger(form, 'rotationDeg'),
-            locked: form.get('locked') === 'on',
-          });
-        }}
+        onSubmit={onSubmit}
       >
-        <label>X mm<input name="xMm" type="number" min="0" defaultValue={item.xMm} required /></label>
-        <label>Y mm<input name="yMm" type="number" min="0" defaultValue={item.yMm} required /></label>
-        <label>Z mm<input name="zMm" type="number" min="0" defaultValue={item.zMm} required /></label>
-        <label>Rotacion<input name="rotationDeg" type="number" min="0" step="90" defaultValue={item.rotationDeg} required /></label>
-        <label className="check wide"><input name="locked" type="checkbox" defaultChecked={item.locked} /> Bloquear bulto</label>
+        <label>X mm<input type="number" min="0" required {...register('xMm', { required: true })} /></label>
+        <label>Y mm<input type="number" min="0" required {...register('yMm', { required: true })} /></label>
+        <label>Z mm<input type="number" min="0" required {...register('zMm', { required: true })} /></label>
+        <label>Rotacion<input type="number" min="0" step="90" required {...register('rotationDeg', { required: true })} /></label>
+        <label className="check wide"><input type="checkbox" {...register('locked')} /> Bloquear bulto</label>
         <button type="submit" disabled={isSaving}>{isSaving ? 'Guardando' : 'Guardar ajuste'}</button>
         <MutationError error={error} />
       </form>}
     </div>
   );
+}
+
+export function buildPlacedItemAdjustmentPayload(values: PlacedItemAdjustmentFormValues): AdjustPlacedItemPayload {
+  return {
+    xMm: requiredIntegerValue(values.xMm),
+    yMm: requiredIntegerValue(values.yMm),
+    zMm: requiredIntegerValue(values.zMm),
+    rotationDeg: requiredIntegerValue(values.rotationDeg),
+    locked: Boolean(values.locked),
+  };
+}
+
+function requiredIntegerValue(value: string) {
+  return Number.parseInt(value.trim(), 10);
 }
 
 function PlanCriticalBanner({ count }: { count: number }) {
