@@ -62,7 +62,11 @@ button { cursor: pointer; }
   margin-left: auto;
 }
 
-.top-nav button {
+.top-nav a {
+  text-decoration: none;
+}
+
+.top-nav a {
   border: 1px solid rgba(255,255,255,.16);
   border-radius: 999px;
   color: #ffe9c6;
@@ -74,7 +78,7 @@ button { cursor: pointer; }
   text-transform: uppercase;
 }
 
-.top-nav button.active {
+.top-nav a.active {
   border-color: rgba(255,180,95,.78);
   color: #1a1209;
   background: #ffb45f;
@@ -145,7 +149,7 @@ textarea { resize: vertical; }
 .check { display: flex; align-items: center; gap: 8px; }
 .check input { width: auto; }
 
-button:not(.brand):not(.row):not(.dash):not(.back):not(.operation-nav button):not(.top-nav button), .ghost {
+button:not(.brand):not(.row):not(.dash):not(.back):not(.operation-nav button), .ghost {
   border: 0;
   border-radius: 999px;
   color: #1a1209;
