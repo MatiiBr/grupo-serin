@@ -4,6 +4,7 @@ import { Edges, OrbitControls, Text } from '@react-three/drei';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { loadingPlansApi } from '../../../api/loading-plans';
+import { queryKeys } from '../../../api/queryKeys';
 import type { LoadingPlan, PlacedItem, PlanAlert, Truck } from '../../../api/types';
 import { MutationError, SectionTitle } from '../../../components/ui';
 import { requiredInteger } from '../../../lib/forms';
@@ -20,8 +21,8 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
     mutationFn: ({ itemId, payload }: { itemId: string; payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2] }) =>
       loadingPlansApi.adjustPlacedItem(plan.id, itemId, payload),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['loading-plan', operationId] });
-      void queryClient.invalidateQueries({ queryKey: ['operation', operationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.loadingPlan.current(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
   const sequenceByPlacedItemId = useMemo(() => new Map(plan.steps.filter((step) => step.placedItemId).map((step) => [step.placedItemId!, step.sequence])), [plan.steps]);
