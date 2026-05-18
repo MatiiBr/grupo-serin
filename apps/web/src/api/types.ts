@@ -408,6 +408,21 @@ export interface LoadingPlanEvaluation {
   penalties: LoadingPlanEvaluationPenalty[];
 }
 
+export interface LoadingPlanCandidateSummary {
+  index: number;
+  name: string;
+  score: number;
+  hardViolationCount: number;
+  placedItemCount: number;
+  unplacedItemCount: number;
+}
+
+export interface LoadingPlanCandidateDiagnostics {
+  winnerIndex: number;
+  winnerName: string;
+  candidates: LoadingPlanCandidateSummary[];
+}
+
 export interface PlanAlert {
   id: string;
   severity: string;
@@ -484,6 +499,7 @@ export interface LoadingPlan {
   alerts: PlanAlert[];
   metrics: PlanMetrics | null;
   evaluation?: LoadingPlanEvaluation | null;
+  candidateDiagnostics?: LoadingPlanCandidateDiagnostics;
   createdAt: string;
   updatedAt: string;
   approvedAt?: string | null;

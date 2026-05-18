@@ -4,6 +4,7 @@ import { LoadingPlanEvaluator } from './loading-plan-evaluator';
 import {
   LoadingPlannerInput,
   LoadingPlannerResult,
+  PlannerCandidateDiagnostics,
   PlannerPlacedItem,
   PlannerProductInput,
   PlannerTruckZoneInput,
@@ -23,7 +24,13 @@ interface ZoneCandidate {
 
 interface CandidateResult {
   index: number;
+  name: string;
   result: LoadingPlannerResult;
+}
+
+interface CandidateOrdering {
+  name: string;
+  units: Unit[];
 }
 
 const ZONE_ORDER = [TruckZoneType.CABIN_SIDE, TruckZoneType.CENTER, TruckZoneType.DOOR_SIDE];
@@ -38,9 +45,10 @@ export class HeuristicLoadingPlanner {
     const zones = this.buildZones(input.truck.zones, truckLength, truckWidth);
     const units = this.expandUnits(input.products, input.destinations);
 
-    return this.selectBestCandidate(this.candidateOrderings(units).map((candidateUnits, index) => ({
+    return this.selectBestCandidate(this.candidateOrderings(units).map((candidate, index) => ({
       index,
-      result: this.generateCandidate(input, candidateUnits, zones, truckHeight),
+      name: candidate.name,
+      result: this.generateCandidate(input, candidate.units, zones, truckHeight),
     })));
   }
 
@@ -107,12 +115,12 @@ export class HeuristicLoadingPlanner {
     return this.sortCurrent(units);
   }
 
-  private candidateOrderings(units: Unit[]) {
+  private candidateOrderings(units: Unit[]): CandidateOrdering[] {
     return this.uniqueOrderings([
-      this.sortCurrent(units),
-      this.sortLightFirst(units),
-      this.sortVolumeFirst(units),
-      this.sortTargetZone(units),
+      { name: 'current', units: this.sortCurrent(units) },
+      { name: 'light-first', units: this.sortLightFirst(units) },
+      { name: 'volume-first', units: this.sortVolumeFirst(units) },
+      { name: 'target-zone', units: this.sortTargetZone(units) },
     ]);
   }
 
@@ -161,10 +169,10 @@ export class HeuristicLoadingPlanner {
     });
   }
 
-  private uniqueOrderings(orderings: Unit[][]) {
+  private uniqueOrderings(orderings: CandidateOrdering[]) {
     const seen = new Set<string>();
     return orderings.filter((ordering) => {
-      const key = ordering.map((unit) => `${unit.id}:${unit.unitIndex}`).join('|');
+      const key = ordering.units.map((unit) => `${unit.id}:${unit.unitIndex}`).join('|');
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -172,7 +180,26 @@ export class HeuristicLoadingPlanner {
   }
 
   private selectBestCandidate(candidates: CandidateResult[]) {
-    return candidates.reduce((best, candidate) => (this.isCandidateBetter(candidate, best) ? candidate : best)).result;
+    const winner = candidates.reduce((best, candidate) => (this.isCandidateBetter(candidate, best) ? candidate : best));
+    return {
+      ...winner.result,
+      candidateDiagnostics: this.buildCandidateDiagnostics(winner, candidates),
+    };
+  }
+
+  private buildCandidateDiagnostics(winner: CandidateResult, candidates: CandidateResult[]): PlannerCandidateDiagnostics {
+    return {
+      winnerIndex: winner.index,
+      winnerName: winner.name,
+      candidates: candidates.map((candidate) => ({
+        index: candidate.index,
+        name: candidate.name,
+        score: candidate.result.evaluation.score,
+        hardViolationCount: candidate.result.evaluation.hardViolationCount,
+        placedItemCount: candidate.result.placedItems.length,
+        unplacedItemCount: candidate.result.unplacedItems.length,
+      })),
+    };
   }
 
   private isCandidateBetter(candidate: CandidateResult, best: CandidateResult) {

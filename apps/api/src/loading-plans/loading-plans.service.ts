@@ -5,7 +5,7 @@ import { HeuristicLoadingPlanner } from '../domain/loading-planner/heuristic-loa
 import { Bounds, isWithinBounds, overlaps } from '../domain/loading-planner/geometry';
 import { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loading-planner/loading-planner.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { buildLoadingPlanEvaluationDto } from './loading-plan-evaluation.dto';
+import { buildLoadingPlanCandidateDiagnosticsDto, buildLoadingPlanEvaluationDto } from './loading-plan-evaluation.dto';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
 
 const loadingPlanInclude = Prisma.validator<Prisma.LoadingPlanInclude>()({
@@ -177,7 +177,7 @@ export class LoadingPlansService {
       return tx.loadingPlan.findUniqueOrThrow({ where: { id: createdPlan.id }, include: loadingPlanInclude });
     });
 
-    return this.toDto(plan);
+    return this.toDto(plan, result.candidateDiagnostics);
   }
 
   async findCurrent(operationId: string) {
@@ -658,7 +658,7 @@ export class LoadingPlansService {
     }, 0);
   }
 
-  private toDto(plan: LoadingPlanWithRelations) {
+  private toDto(plan: LoadingPlanWithRelations, candidateDiagnostics?: LoadingPlannerResult['candidateDiagnostics']) {
     return {
       id: plan.id,
       operationId: plan.operationId,
@@ -737,6 +737,7 @@ export class LoadingPlansService {
           }
         : null,
       evaluation: plan.metrics ? buildLoadingPlanEvaluationDto(plan.metrics, plan.alerts) : null,
+      candidateDiagnostics: buildLoadingPlanCandidateDiagnosticsDto(candidateDiagnostics),
       createdAt: plan.createdAt,
       updatedAt: plan.updatedAt,
       alertCounts: {

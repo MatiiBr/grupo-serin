@@ -1,4 +1,5 @@
 import { AlertSeverity, AlertType } from '@prisma/client';
+import type { PlannerCandidateDiagnostics } from '../domain/loading-planner/loading-planner.types';
 
 const BASE_SCORE = 1000;
 const HARD_VIOLATION_PENALTY = 250;
@@ -41,4 +42,10 @@ export function buildLoadingPlanEvaluationDto(metrics: EvaluationMetricsInput, a
   const score = Math.max(0, BASE_SCORE + placedReward - hardViolationCount * HARD_VIOLATION_PENALTY - softPenaltyTotal);
 
   return { score, hardViolationCount, softPenaltyTotal, penalties };
+}
+
+export function buildLoadingPlanCandidateDiagnosticsDto(diagnostics?: PlannerCandidateDiagnostics) {
+  if (!diagnostics) return undefined;
+
+  return diagnostics;
 }

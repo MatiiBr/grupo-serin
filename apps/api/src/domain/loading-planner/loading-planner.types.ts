@@ -128,6 +128,21 @@ export interface PlannerEvaluation {
   alerts: PlannerAlert[];
 }
 
+export interface PlannerCandidateSummary {
+  index: number;
+  name: string;
+  score: number;
+  hardViolationCount: number;
+  placedItemCount: number;
+  unplacedItemCount: number;
+}
+
+export interface PlannerCandidateDiagnostics {
+  winnerIndex: number;
+  winnerName: string;
+  candidates: PlannerCandidateSummary[];
+}
+
 export interface LoadingPlannerResult {
   placedItems: PlannerPlacedItem[];
   unplacedItems: PlannerUnplacedItem[];
@@ -135,4 +150,5 @@ export interface LoadingPlannerResult {
   alerts: PlannerAlert[];
   metrics: PlannerMetrics;
   evaluation: PlannerEvaluation;
+  candidateDiagnostics?: PlannerCandidateDiagnostics;
 }
