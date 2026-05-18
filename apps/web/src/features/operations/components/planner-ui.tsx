@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { loadingPlansApi } from '../../../api/loading-plans';
 import { queryKeys } from '../../../api/queryKeys';
-import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanEvaluation, PlacedItem, PlanAlert, Truck } from '../../../api/types';
+import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanCandidateDiagnostics, LoadingPlanEvaluation, PlacedItem, PlanAlert, Truck } from '../../../api/types';
 import { MutationError, SectionTitle } from '../../../components/ui';
 import { DataTable, MetricGrid } from './operation-ui';
 
@@ -62,6 +62,7 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
         <SectionTitle title={`Plan v${plan.version}`} subtitle={`${plan.planStatus} / ${plan.loadingMethod} / ${plan.isCurrent ? 'actual' : 'historico'}`} />
         <MetricGrid metrics={plan.metrics} />
         <PlanEvaluationPanel evaluation={plan.evaluation ?? undefined} />
+        <PlanCandidateDiagnosticsPanel diagnostics={plan.candidateDiagnostics} />
       </section>
       <section className="card simulation-card">
         <SectionTitle title="Simulacion 3D de carga" subtitle="Secuencia operativa con altura real y posicion Z" />
@@ -113,6 +114,37 @@ export function PlanEvaluationPanel({ evaluation }: { evaluation?: LoadingPlanEv
             <strong>{penalty.code}</strong>
             <b>-{penalty.points} pts</b>
             <span>{penalty.message}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function PlanCandidateDiagnosticsPanel({ diagnostics }: { diagnostics?: LoadingPlanCandidateDiagnostics | null }) {
+  if (!diagnostics) return null;
+
+  const winner = diagnostics.candidates.find((candidate) => candidate.index === diagnostics.winnerIndex);
+
+  return (
+    <div className="candidate-diagnostics-panel">
+      <div className="candidate-winner-card">
+        <h3>Candidatos evaluados</h3>
+        <span>Ganador #{diagnostics.winnerIndex}</span>
+        <strong>{diagnostics.winnerName}</strong>
+        {winner ? <small>Score {winner.score} / {winner.hardViolationCount} hard</small> : null}
+      </div>
+      <div className="candidate-list">
+        {diagnostics.candidates.map((candidate) => (
+          <div className={`candidate-row${candidate.index === diagnostics.winnerIndex ? ' winner' : ''}`} key={`${candidate.index}-${candidate.name}`}>
+            <div>
+              <b>{candidate.name}</b>
+              <span>#{candidate.index}</span>
+            </div>
+            <strong>Score {candidate.score}</strong>
+            <span>{candidate.hardViolationCount} hard</span>
+            <span>{candidate.placedItemCount} ubicados</span>
+            <span>{candidate.unplacedItemCount} sin ubicar</span>
           </div>
         ))}
       </div>
