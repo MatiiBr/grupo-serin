@@ -147,4 +147,42 @@ describe('HeuristicLoadingPlanner', () => {
       message: expect.stringContaining('zone'),
     }));
   });
+
+  it('selects an alternate candidate when it avoids a zone max weight violation', () => {
+    const zones: PlannerTruckZoneInput[] = [
+      { id: 'zone-cabin', type: TruckZoneType.CABIN_SIDE, startXMm: 0, endXMm: 1000, startYMm: 0, endYMm: 1000 },
+      { id: 'zone-center', type: TruckZoneType.CENTER, startXMm: 1000, endXMm: 2000, startYMm: 0, endYMm: 1000 },
+      { id: 'zone-door', type: TruckZoneType.DOOR_SIDE, startXMm: 2000, endXMm: 3000, startYMm: 0, endYMm: 1000, maxWeightKg: 400 },
+    ];
+
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({
+        truck: { lengthMm: 3000, widthMm: 1000, heightMm: 1000, zones },
+        products: [
+          createProduct({ id: 'heavy-product', weightKg: 500, lengthMm: 1000, widthMm: 1000, heightMm: 300 }),
+          createProduct({ id: 'light-product', weightKg: 100, lengthMm: 1000, widthMm: 1000, heightMm: 300 }),
+        ],
+      }),
+    );
+
+    expect(result.placedItems).toHaveLength(2);
+    expect(result.evaluation.hardViolationCount).toBe(0);
+    expect(result.alerts).not.toContainEqual(expect.objectContaining({ message: expect.stringContaining('zone') }));
+    expect(result.placedItems).toContainEqual(expect.objectContaining({ productId: 'light-product', zoneType: TruckZoneType.DOOR_SIDE }));
+    expect(result.placedItems).toContainEqual(expect.objectContaining({ productId: 'heavy-product', zoneType: TruckZoneType.CABIN_SIDE }));
+  });
+
+  it('keeps the current ordering when candidate scores tie', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({
+        products: [
+          createProduct({ id: 'heavy-product', weightKg: 500, lengthMm: 1000, widthMm: 500, heightMm: 300 }),
+          createProduct({ id: 'light-product', weightKg: 100, lengthMm: 1000, widthMm: 500, heightMm: 300 }),
+        ],
+      }),
+    );
+
+    expect(result.evaluation.hardViolationCount).toBe(0);
+    expect(result.placedItems.map((item) => item.productId)).toEqual(['heavy-product', 'light-product']);
+  });
 });
