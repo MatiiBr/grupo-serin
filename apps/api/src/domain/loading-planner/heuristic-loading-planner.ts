@@ -1,5 +1,6 @@
 import { AlertSeverity, AlertType, TruckZoneType, UnplacedReason } from '@prisma/client';
 import { Bounds, isWithinBounds, overlaps, Rect } from './geometry';
+import { LoadingPlanEvaluator } from './loading-plan-evaluator';
 import {
   LoadingPlannerInput,
   LoadingPlannerResult,
@@ -23,6 +24,8 @@ interface ZoneCandidate {
 const ZONE_ORDER = [TruckZoneType.CABIN_SIDE, TruckZoneType.CENTER, TruckZoneType.DOOR_SIDE];
 
 export class HeuristicLoadingPlanner {
+  private readonly evaluator = new LoadingPlanEvaluator();
+
   generate(input: LoadingPlannerInput): LoadingPlannerResult {
     const truckLength = input.truck.lengthMm ?? 0;
     const truckWidth = input.truck.widthMm ?? 0;
@@ -57,10 +60,18 @@ export class HeuristicLoadingPlanner {
       title: `Load unit ${item.unitIndex}`,
       instructions: `Place product ${item.productId} in ${item.zoneType} at x=${item.xMm}mm, y=${item.yMm}mm.`,
     }));
-    const alerts = this.buildAlerts(input, placedItems, unplacedItems);
-    const metrics = this.buildMetrics(input, placedItems, unplacedItems, alerts);
+    const baseAlerts = this.buildAlerts(input, placedItems, unplacedItems);
+    const metrics = this.buildMetrics(input, placedItems, unplacedItems, baseAlerts);
+    const baseResult = { placedItems, unplacedItems, steps, alerts: baseAlerts, metrics };
+    const evaluation = this.evaluator.evaluate(input, baseResult);
+    const alerts = [...baseAlerts, ...evaluation.alerts];
+    const finalMetrics = {
+      ...metrics,
+      criticalAlertCount: alerts.filter((alert) => alert.severity === AlertSeverity.CRITICAL).length,
+      warningAlertCount: alerts.filter((alert) => alert.severity === AlertSeverity.WARNING).length,
+    };
 
-    return { placedItems, unplacedItems, steps, alerts, metrics };
+    return { placedItems, unplacedItems, steps, alerts, metrics: finalMetrics, evaluation };
   }
 
   private expandAndSortUnits(products: PlannerProductInput[], destinations: LoadingPlannerInput['destinations']) {
