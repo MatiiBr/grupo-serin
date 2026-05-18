@@ -395,6 +395,19 @@ export interface PlanMetrics {
   centerOfGravityZ?: number;
 }
 
+export interface LoadingPlanEvaluationPenalty {
+  code: string;
+  points: number;
+  message: string;
+}
+
+export interface LoadingPlanEvaluation {
+  score: number;
+  hardViolationCount: number;
+  softPenaltyTotal: number;
+  penalties: LoadingPlanEvaluationPenalty[];
+}
+
 export interface PlanAlert {
   id: string;
   severity: string;
@@ -470,6 +483,7 @@ export interface LoadingPlan {
   steps: LoadingStep[];
   alerts: PlanAlert[];
   metrics: PlanMetrics | null;
+  evaluation?: LoadingPlanEvaluation | null;
   createdAt: string;
   updatedAt: string;
   approvedAt?: string | null;
