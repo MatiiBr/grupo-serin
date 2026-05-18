@@ -5,6 +5,7 @@ import { HeuristicLoadingPlanner } from '../domain/loading-planner/heuristic-loa
 import { Bounds, isWithinBounds, overlaps } from '../domain/loading-planner/geometry';
 import { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loading-planner/loading-planner.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildLoadingPlanEvaluationDto } from './loading-plan-evaluation.dto';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
 
 const loadingPlanInclude = Prisma.validator<Prisma.LoadingPlanInclude>()({
@@ -735,6 +736,7 @@ export class LoadingPlansService {
             centerOfGravityZ: decimalToNumber(plan.metrics.centerOfGravityZ),
           }
         : null,
+      evaluation: plan.metrics ? buildLoadingPlanEvaluationDto(plan.metrics, plan.alerts) : null,
       createdAt: plan.createdAt,
       updatedAt: plan.updatedAt,
       alertCounts: {

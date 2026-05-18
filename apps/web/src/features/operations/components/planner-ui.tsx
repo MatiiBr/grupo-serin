@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { loadingPlansApi } from '../../../api/loading-plans';
 import { queryKeys } from '../../../api/queryKeys';
-import type { AdjustPlacedItemPayload, LoadingPlan, PlacedItem, PlanAlert, Truck } from '../../../api/types';
+import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanEvaluation, PlacedItem, PlanAlert, Truck } from '../../../api/types';
 import { MutationError, SectionTitle } from '../../../components/ui';
 import { DataTable, MetricGrid } from './operation-ui';
 
@@ -61,6 +61,7 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
       <section className="card">
         <SectionTitle title={`Plan v${plan.version}`} subtitle={`${plan.planStatus} / ${plan.loadingMethod} / ${plan.isCurrent ? 'actual' : 'historico'}`} />
         <MetricGrid metrics={plan.metrics} />
+        <PlanEvaluationPanel evaluation={plan.evaluation ?? undefined} />
       </section>
       <section className="card simulation-card">
         <SectionTitle title="Simulacion 3D de carga" subtitle="Secuencia operativa con altura real y posicion Z" />
@@ -89,6 +90,32 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
         <DataTable title="Ubicados" headers={['Producto', 'Destino', 'X/Y/Z', 'L/A/H']} rows={plan.placedItems.map((item) => [item.productCode, item.destinationName ?? '-', `${item.xMm}/${item.yMm}/${item.zMm}`, `${item.lengthMm}/${item.widthMm}/${item.heightMm}`])} />
         <DataTable title="No ubicados" headers={['Producto', 'Destino', 'Motivo']} rows={plan.unplacedItems.map((item) => [item.productCode, item.destinationName ?? '-', item.message])} />
       </section>
+    </div>
+  );
+}
+
+export function PlanEvaluationPanel({ evaluation }: { evaluation?: LoadingPlanEvaluation | null }) {
+  if (!evaluation) return null;
+
+  const status = evaluation.hardViolationCount > 0 ? `${evaluation.hardViolationCount} hard violation(s)` : 'Sin violaciones hard';
+
+  return (
+    <div className={`evaluation-panel${evaluation.hardViolationCount > 0 ? ' critical' : ''}`}>
+      <div className="evaluation-score">
+        <h3>Score de plan</h3>
+        <strong>{evaluation.score}</strong>
+        <small>{status}</small>
+      </div>
+      <div className="evaluation-penalties">
+        <span>Penalizaciones</span>
+        {evaluation.penalties.length === 0 ? <p className="muted">Sin penalizaciones blandas.</p> : evaluation.penalties.map((penalty) => (
+          <div className="penalty-row" key={penalty.code}>
+            <strong>{penalty.code}</strong>
+            <b>-{penalty.points} pts</b>
+            <span>{penalty.message}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
