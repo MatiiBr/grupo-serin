@@ -21,6 +21,11 @@ interface ZoneCandidate {
   bounds: Bounds;
 }
 
+interface CandidateResult {
+  index: number;
+  result: LoadingPlannerResult;
+}
+
 const ZONE_ORDER = [TruckZoneType.CABIN_SIDE, TruckZoneType.CENTER, TruckZoneType.DOOR_SIDE];
 
 export class HeuristicLoadingPlanner {
@@ -31,7 +36,15 @@ export class HeuristicLoadingPlanner {
     const truckWidth = input.truck.widthMm ?? 0;
     const truckHeight = input.truck.heightMm ?? 0;
     const zones = this.buildZones(input.truck.zones, truckLength, truckWidth);
-    const units = this.expandAndSortUnits(input.products, input.destinations);
+    const units = this.expandUnits(input.products, input.destinations);
+
+    return this.selectBestCandidate(this.candidateOrderings(units).map((candidateUnits, index) => ({
+      index,
+      result: this.generateCandidate(input, candidateUnits, zones, truckHeight),
+    })));
+  }
+
+  private generateCandidate(input: LoadingPlannerInput, units: Unit[], zones: ZoneCandidate[], truckHeight: number): LoadingPlannerResult {
     const placedItems: PlannerPlacedItem[] = [];
     const unplacedItems: LoadingPlannerResult['unplacedItems'] = [];
 
@@ -74,7 +87,7 @@ export class HeuristicLoadingPlanner {
     return { placedItems, unplacedItems, steps, alerts, metrics: finalMetrics, evaluation };
   }
 
-  private expandAndSortUnits(products: PlannerProductInput[], destinations: LoadingPlannerInput['destinations']) {
+  private expandUnits(products: PlannerProductInput[], destinations: LoadingPlannerInput['destinations']) {
     const destinationById = new Map(destinations.map((destination) => [destination.id, destination]));
     const orders = destinations.map((destination) => destination.unloadingOrder).sort((a, b) => a - b);
     const units: Unit[] = [];
@@ -91,7 +104,20 @@ export class HeuristicLoadingPlanner {
       }
     }
 
-    return units.sort((a, b) => {
+    return this.sortCurrent(units);
+  }
+
+  private candidateOrderings(units: Unit[]) {
+    return this.uniqueOrderings([
+      this.sortCurrent(units),
+      this.sortLightFirst(units),
+      this.sortVolumeFirst(units),
+      this.sortTargetZone(units),
+    ]);
+  }
+
+  private sortCurrent(units: Unit[]) {
+    return [...units].sort((a, b) => {
       const orderDiff = b.destinationOrder - a.destinationOrder;
       if (orderDiff !== 0) return orderDiff;
 
@@ -100,6 +126,62 @@ export class HeuristicLoadingPlanner {
 
       return this.volumeMm3(b) - this.volumeMm3(a);
     });
+  }
+
+  private sortLightFirst(units: Unit[]) {
+    return [...units].sort((a, b) => {
+      const orderDiff = b.destinationOrder - a.destinationOrder;
+      if (orderDiff !== 0) return orderDiff;
+
+      const weightDiff = (a.weightKg ?? 0) - (b.weightKg ?? 0);
+      if (weightDiff !== 0) return weightDiff;
+
+      return this.volumeMm3(a) - this.volumeMm3(b);
+    });
+  }
+
+  private sortVolumeFirst(units: Unit[]) {
+    return [...units].sort((a, b) => {
+      const orderDiff = b.destinationOrder - a.destinationOrder;
+      if (orderDiff !== 0) return orderDiff;
+
+      const volumeDiff = this.volumeMm3(b) - this.volumeMm3(a);
+      if (volumeDiff !== 0) return volumeDiff;
+
+      return (b.weightKg ?? 0) - (a.weightKg ?? 0);
+    });
+  }
+
+  private sortTargetZone(units: Unit[]) {
+    return [...units].sort((a, b) => {
+      const zoneDiff = ZONE_ORDER.indexOf(a.targetZone) - ZONE_ORDER.indexOf(b.targetZone);
+      if (zoneDiff !== 0) return zoneDiff;
+
+      return this.sortCurrent([a, b])[0] === a ? -1 : 1;
+    });
+  }
+
+  private uniqueOrderings(orderings: Unit[][]) {
+    const seen = new Set<string>();
+    return orderings.filter((ordering) => {
+      const key = ordering.map((unit) => `${unit.id}:${unit.unitIndex}`).join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  private selectBestCandidate(candidates: CandidateResult[]) {
+    return candidates.reduce((best, candidate) => (this.isCandidateBetter(candidate, best) ? candidate : best)).result;
+  }
+
+  private isCandidateBetter(candidate: CandidateResult, best: CandidateResult) {
+    const candidateEvaluation = candidate.result.evaluation;
+    const bestEvaluation = best.result.evaluation;
+    if (candidateEvaluation.score !== bestEvaluation.score) return candidateEvaluation.score > bestEvaluation.score;
+    if (candidateEvaluation.hardViolationCount !== bestEvaluation.hardViolationCount) return candidateEvaluation.hardViolationCount < bestEvaluation.hardViolationCount;
+    if (candidate.result.placedItems.length !== best.result.placedItems.length) return candidate.result.placedItems.length > best.result.placedItems.length;
+    return candidate.index < best.index;
   }
 
   private buildZones(truckZones: PlannerTruckZoneInput[], truckLength: number, truckWidth: number): ZoneCandidate[] {
