@@ -114,10 +114,25 @@ export interface PlannerMetrics {
   centerOfGravityZ?: number;
 }
 
+export interface PlannerEvaluationPenalty {
+  code: string;
+  points: number;
+  message: string;
+}
+
+export interface PlannerEvaluation {
+  score: number;
+  hardViolationCount: number;
+  softPenaltyTotal: number;
+  penalties: PlannerEvaluationPenalty[];
+  alerts: PlannerAlert[];
+}
+
 export interface LoadingPlannerResult {
   placedItems: PlannerPlacedItem[];
   unplacedItems: PlannerUnplacedItem[];
   steps: PlannerStep[];
   alerts: PlannerAlert[];
   metrics: PlannerMetrics;
+  evaluation: PlannerEvaluation;
 }

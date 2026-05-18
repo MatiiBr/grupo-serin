@@ -60,6 +60,8 @@ describe('HeuristicLoadingPlanner', () => {
     expect(result.metrics.totalWeightKg).toBe(500);
     expect(result.metrics.placedWeightKg).toBe(500);
     expect(result.metrics.unplacedWeightKg).toBe(0);
+    expect(result.evaluation.score).toBeGreaterThan(0);
+    expect(result.evaluation.hardViolationCount).toBe(0);
 
     const placed = result.placedItems[0];
     expect(placed.xMm).toBeGreaterThanOrEqual(0);
@@ -128,5 +130,21 @@ describe('HeuristicLoadingPlanner', () => {
     expect(withoutRotation.unplacedItems).toHaveLength(1);
     expect(withRotation.placedItems).toEqual([expect.objectContaining({ rotationDeg: 90, lengthMm: 1000, widthMm: 700 })]);
     expect(withRotation.unplacedItems).toHaveLength(0);
+  });
+
+  it('adds a critical alert when generated placement exceeds zone max weight', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({
+        truck: { zones: [{ ...fullWidthZones[2], maxWeightKg: 400 }] },
+        products: [createProduct({ weightKg: 500 })],
+      }),
+    );
+
+    expect(result.evaluation.hardViolationCount).toBe(1);
+    expect(result.alerts).toContainEqual(expect.objectContaining({
+      severity: AlertSeverity.CRITICAL,
+      type: AlertType.MAX_WEIGHT_EXCEEDED,
+      message: expect.stringContaining('zone'),
+    }));
   });
 });
