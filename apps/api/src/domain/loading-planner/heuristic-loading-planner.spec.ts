@@ -170,6 +170,20 @@ describe('HeuristicLoadingPlanner', () => {
     expect(result.alerts).not.toContainEqual(expect.objectContaining({ message: expect.stringContaining('zone') }));
     expect(result.placedItems).toContainEqual(expect.objectContaining({ productId: 'light-product', zoneType: TruckZoneType.DOOR_SIDE }));
     expect(result.placedItems).toContainEqual(expect.objectContaining({ productId: 'heavy-product', zoneType: TruckZoneType.CABIN_SIDE }));
+    expect(result.candidateDiagnostics).toEqual(expect.objectContaining({
+      winnerIndex: expect.any(Number),
+      winnerName: expect.any(String),
+    }));
+    expect(result.candidateDiagnostics?.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        index: expect.any(Number),
+        name: expect.any(String),
+        score: expect.any(Number),
+        hardViolationCount: expect.any(Number),
+        placedItemCount: 2,
+        unplacedItemCount: 0,
+      }),
+    ]));
   });
 
   it('keeps the current ordering when candidate scores tie', () => {
@@ -184,5 +198,7 @@ describe('HeuristicLoadingPlanner', () => {
 
     expect(result.evaluation.hardViolationCount).toBe(0);
     expect(result.placedItems.map((item) => item.productId)).toEqual(['heavy-product', 'light-product']);
+    expect(result.candidateDiagnostics).toEqual(expect.objectContaining({ winnerIndex: 0, winnerName: 'current' }));
+    expect(result.candidateDiagnostics?.candidates.map((candidate) => candidate.index)).toEqual([0, 1]);
   });
 });

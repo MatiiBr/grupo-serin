@@ -1,6 +1,6 @@
 import { AlertSeverity, AlertType } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import { buildLoadingPlanEvaluationDto } from './loading-plan-evaluation.dto';
+import { buildLoadingPlanCandidateDiagnosticsDto, buildLoadingPlanEvaluationDto } from './loading-plan-evaluation.dto';
 
 describe('buildLoadingPlanEvaluationDto', () => {
   it('builds score and penalties from persisted metrics and alerts', () => {
@@ -27,5 +27,23 @@ describe('buildLoadingPlanEvaluationDto', () => {
 
     expect(evaluation.hardViolationCount).toBe(1);
     expect(evaluation.score).toBeLessThan(1000);
+  });
+
+  it('passes through candidate diagnostics when available', () => {
+    const diagnostics = buildLoadingPlanCandidateDiagnosticsDto({
+      winnerIndex: 1,
+      winnerName: 'light-first',
+      candidates: [
+        { index: 0, name: 'current', score: 800, hardViolationCount: 1, placedItemCount: 2, unplacedItemCount: 0 },
+        { index: 1, name: 'light-first', score: 1050, hardViolationCount: 0, placedItemCount: 2, unplacedItemCount: 0 },
+      ],
+    });
+
+    expect(diagnostics).toEqual(expect.objectContaining({ winnerIndex: 1, winnerName: 'light-first' }));
+    expect(diagnostics?.candidates).toHaveLength(2);
+  });
+
+  it('omits candidate diagnostics when unavailable', () => {
+    expect(buildLoadingPlanCandidateDiagnosticsDto(undefined)).toBeUndefined();
   });
 });
