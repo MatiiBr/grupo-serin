@@ -417,10 +417,19 @@ export interface LoadingPlanCandidateSummary {
   unplacedItemCount: number;
 }
 
+export interface LoadingPlanCandidateDetail extends LoadingPlanCandidateSummary {
+  placedItems: PlacedItem[];
+  unplacedItems: UnplacedItem[];
+  steps: LoadingStep[];
+  alerts: PlanAlert[];
+  metrics: PlanMetrics;
+  evaluation: LoadingPlanEvaluation;
+}
+
 export interface LoadingPlanCandidateDiagnostics {
   winnerIndex: number;
   winnerName: string;
-  candidates: LoadingPlanCandidateSummary[];
+  candidates: LoadingPlanCandidateDetail[];
 }
 
 export interface PlanAlert {

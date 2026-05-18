@@ -177,7 +177,7 @@ export class LoadingPlansService {
       return tx.loadingPlan.findUniqueOrThrow({ where: { id: createdPlan.id }, include: loadingPlanInclude });
     });
 
-    return this.toDto(plan, result.candidateDiagnostics);
+    return this.toDto(plan, result.candidateDiagnostics, operation.products);
   }
 
   async findCurrent(operationId: string) {
@@ -650,15 +650,18 @@ export class LoadingPlansService {
   private sideWeight(placedItems: RecalculationPlan['placedItems'], truckWidth: number, side: 'left' | 'right') {
     const centerY = truckWidth / 2;
     return placedItems.reduce((sum, item) => {
-      const itemCenterY = item.yMm + (item.widthMm ?? 0) / 2;
+      const widthMm = item.widthMm ?? 0;
       const weightKg = decimalToNumber(item.product.weightKg) ?? 0;
-      if (side === 'left' && itemCenterY <= centerY) return sum + weightKg;
-      if (side === 'right' && itemCenterY > centerY) return sum + weightKg;
-      return sum;
+      const leftWidthMm = Math.max(0, Math.min(item.yMm + widthMm, centerY) - item.yMm);
+      const rightWidthMm = Math.max(0, item.yMm + widthMm - Math.max(item.yMm, centerY));
+      const itemWidthMm = leftWidthMm + rightWidthMm;
+      if (itemWidthMm <= 0) return sum;
+
+      return sum + weightKg * (side === 'left' ? leftWidthMm : rightWidthMm) / itemWidthMm;
     }, 0);
   }
 
-  private toDto(plan: LoadingPlanWithRelations, candidateDiagnostics?: LoadingPlannerResult['candidateDiagnostics']) {
+  private toDto(plan: LoadingPlanWithRelations, candidateDiagnostics?: LoadingPlannerResult['candidateDiagnostics'], candidateProducts?: Prisma.LoadProductGetPayload<{ include: { destination: true } }>[]) {
     return {
       id: plan.id,
       operationId: plan.operationId,
@@ -737,13 +740,83 @@ export class LoadingPlansService {
           }
         : null,
       evaluation: plan.metrics ? buildLoadingPlanEvaluationDto(plan.metrics, plan.alerts) : null,
-      candidateDiagnostics: buildLoadingPlanCandidateDiagnosticsDto(candidateDiagnostics),
+      candidateDiagnostics: buildLoadingPlanCandidateDiagnosticsDto(this.toCandidateDiagnosticsDto(candidateDiagnostics, candidateProducts)),
       createdAt: plan.createdAt,
       updatedAt: plan.updatedAt,
       alertCounts: {
         critical: plan.alerts.filter((alert) => alert.severity === AlertSeverity.CRITICAL).length,
         warning: plan.alerts.filter((alert) => alert.severity === AlertSeverity.WARNING).length,
       },
+    };
+  }
+
+  private toCandidateDiagnosticsDto(candidateDiagnostics?: LoadingPlannerResult['candidateDiagnostics'], products: Prisma.LoadProductGetPayload<{ include: { destination: true } }>[] = []) {
+    if (!candidateDiagnostics) return undefined;
+
+    const productById = new Map(products.map((product) => [product.id, product]));
+
+    return {
+      ...candidateDiagnostics,
+      candidates: candidateDiagnostics.candidates.map((candidate) => ({
+        ...candidate,
+        placedItems: candidate.placedItems.map((item) => {
+          const product = productById.get(item.productId);
+          return {
+            id: candidatePlacedItemId(candidate.index, item.productId, item.unitIndex),
+            productId: item.productId,
+            unitIndex: item.unitIndex,
+            productCode: product?.code ?? item.productId,
+            productName: product?.description ?? product?.code ?? item.productId,
+            productFamily: product?.family,
+            destinationId: product?.destinationId,
+            destinationName: product?.destination?.name,
+            truckZoneId: item.truckZoneId,
+            zoneType: item.zoneType,
+            xMm: item.xMm,
+            yMm: item.yMm,
+            zMm: item.zMm,
+            rotationDeg: item.rotationDeg,
+            lengthMm: item.lengthMm,
+            widthMm: item.widthMm,
+            heightMm: item.heightMm,
+            locked: false,
+            manuallyAdjusted: false,
+          };
+        }),
+        unplacedItems: candidate.unplacedItems.map((item) => {
+          const product = productById.get(item.productId);
+          return {
+            id: `candidate-${candidate.index}-unplaced-${item.productId}-${item.unitIndex}`,
+            productId: item.productId,
+            unitIndex: item.unitIndex,
+            productCode: product?.code ?? item.productId,
+            productName: product?.description ?? product?.code ?? item.productId,
+            productFamily: product?.family,
+            destinationId: product?.destinationId,
+            destinationName: product?.destination?.name,
+            reason: item.reason,
+            message: item.message,
+          };
+        }),
+        steps: candidate.steps.map((step) => ({
+          id: `candidate-${candidate.index}-step-${step.sequence}`,
+          planId: `candidate-${candidate.index}`,
+          placedItemId: candidatePlacedItemId(candidate.index, step.productId, step.unitIndex),
+          sequence: step.sequence,
+          title: step.title,
+          instructions: step.instructions,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        })),
+        alerts: candidate.alerts.map((alert, alertIndex) => ({
+          id: `candidate-${candidate.index}-alert-${alertIndex}`,
+          productId: alert.productId,
+          severity: alert.severity,
+          type: alert.type,
+          message: alert.message,
+          createdAt: new Date(0),
+        })),
+      })),
     };
   }
 
@@ -782,6 +855,10 @@ export class LoadingPlansService {
   private unitKey(productId: string, unitIndex: number) {
     return `${productId}:${unitIndex}`;
   }
+}
+
+function candidatePlacedItemId(candidateIndex: number, productId: string, unitIndex: number) {
+  return `candidate-${candidateIndex}-placed-${productId}-${unitIndex}`;
 }
 
 function decimalToNumber(value: Decimalish) {

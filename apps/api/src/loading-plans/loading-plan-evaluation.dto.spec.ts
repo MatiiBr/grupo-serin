@@ -34,8 +34,8 @@ describe('buildLoadingPlanEvaluationDto', () => {
       winnerIndex: 1,
       winnerName: 'light-first',
       candidates: [
-        { index: 0, name: 'current', score: 800, hardViolationCount: 1, placedItemCount: 2, unplacedItemCount: 0 },
-        { index: 1, name: 'light-first', score: 1050, hardViolationCount: 0, placedItemCount: 2, unplacedItemCount: 0 },
+        { index: 0, name: 'current', score: 800, hardViolationCount: 1, placedItemCount: 2, unplacedItemCount: 0, placedItems: [], unplacedItems: [], steps: [], alerts: [], metrics: {}, evaluation: {} },
+        { index: 1, name: 'light-first', score: 1050, hardViolationCount: 0, placedItemCount: 2, unplacedItemCount: 0, placedItems: [], unplacedItems: [], steps: [], alerts: [], metrics: {}, evaluation: {} },
       ],
     });
 

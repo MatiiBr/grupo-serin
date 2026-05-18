@@ -39,7 +39,7 @@ export class LoadingPlanEvaluator {
       return [{
         severity: AlertSeverity.CRITICAL,
         type: AlertType.MAX_WEIGHT_EXCEEDED,
-        message: `Truck zone ${zoneType} load ${weightKg.toFixed(3)}kg exceeds zone max ${zone.maxWeightKg.toFixed(3)}kg.`,
+        message: `La ${zoneTypeLabel(zoneType)} carga ${formatKg(weightKg)} y supera el maximo de zona ${formatKg(zone.maxWeightKg)}.`,
       }];
     });
   }
@@ -69,4 +69,18 @@ export class LoadingPlanEvaluator {
 
     return penalties;
   }
+}
+
+function formatKg(value: number) {
+  return `${value.toFixed(1)} kg`;
+}
+
+function zoneTypeLabel(zoneType: TruckZoneTypeValue) {
+  const labels: Record<TruckZoneTypeValue, string> = {
+    CABIN_SIDE: 'zona cabina',
+    CENTER: 'zona central',
+    DOOR_SIDE: 'zona puerta',
+  };
+
+  return labels[zoneType] ?? zoneType;
 }

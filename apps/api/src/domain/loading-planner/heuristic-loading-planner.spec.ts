@@ -70,6 +70,26 @@ describe('HeuristicLoadingPlanner', () => {
     expect(placed.yMm + placed.widthMm).toBeLessThanOrEqual(2000);
   });
 
+  it('splits full-width item weight across left and right sides', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({
+        truck: { widthMm: 1000, zones: fullWidthZones.map((zone) => ({ ...zone, startYMm: 0, endYMm: 1000 })) },
+        products: [
+          createProduct({ id: 'heavy-product', weightKg: 500, lengthMm: 1000, widthMm: 1000, heightMm: 300 }),
+          createProduct({ id: 'light-product', weightKg: 100, lengthMm: 1000, widthMm: 1000, heightMm: 300 }),
+        ],
+      }),
+    );
+
+    expect(result.metrics.leftWeightKg).toBe(300);
+    expect(result.metrics.rightWeightKg).toBe(300);
+    expect(result.alerts).not.toContainEqual(expect.objectContaining({
+      severity: AlertSeverity.WARNING,
+      type: AlertType.WEIGHT_IMBALANCE,
+      message: expect.stringContaining('peso lateral'),
+    }));
+  });
+
   it('marks an oversized item as unplaced and emits a critical alert', () => {
     const result = new HeuristicLoadingPlanner().generate(
       createInput({ products: [createProduct({ lengthMm: 10_000, widthMm: 500, heightMm: 400 })] }),
@@ -144,7 +164,7 @@ describe('HeuristicLoadingPlanner', () => {
     expect(result.alerts).toContainEqual(expect.objectContaining({
       severity: AlertSeverity.CRITICAL,
       type: AlertType.MAX_WEIGHT_EXCEEDED,
-      message: expect.stringContaining('zone'),
+      message: expect.stringContaining('zona puerta'),
     }));
   });
 
@@ -182,6 +202,11 @@ describe('HeuristicLoadingPlanner', () => {
         hardViolationCount: expect.any(Number),
         placedItemCount: 2,
         unplacedItemCount: 0,
+        placedItems: expect.any(Array),
+        steps: expect.any(Array),
+        alerts: expect.any(Array),
+        metrics: expect.any(Object),
+        evaluation: expect.any(Object),
       }),
     ]));
   });

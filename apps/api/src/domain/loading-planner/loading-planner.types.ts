@@ -137,10 +137,19 @@ export interface PlannerCandidateSummary {
   unplacedItemCount: number;
 }
 
+export interface PlannerCandidateDetail extends PlannerCandidateSummary {
+  placedItems: PlannerPlacedItem[];
+  unplacedItems: PlannerUnplacedItem[];
+  steps: PlannerStep[];
+  alerts: PlannerAlert[];
+  metrics: PlannerMetrics;
+  evaluation: PlannerEvaluation;
+}
+
 export interface PlannerCandidateDiagnostics {
   winnerIndex: number;
   winnerName: string;
-  candidates: PlannerCandidateSummary[];
+  candidates: PlannerCandidateDetail[];
 }
 
 export interface LoadingPlannerResult {

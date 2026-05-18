@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { loadingPlansApi } from '../../../api/loading-plans';
 import { queryKeys } from '../../../api/queryKeys';
-import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanCandidateDiagnostics, LoadingPlanEvaluation, PlacedItem, PlanAlert, Truck } from '../../../api/types';
+import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanCandidateDetail, LoadingPlanCandidateDiagnostics, LoadingPlanEvaluation, PlacedItem, PlanAlert, Truck } from '../../../api/types';
 import { MutationError, SectionTitle } from '../../../components/ui';
 import { DataTable, MetricGrid } from './operation-ui';
 
@@ -25,6 +25,7 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
   const [currentStep, setCurrentStep] = useState(() => (plan.steps.length > 0 ? 1 : 0));
   const [viewAll, setViewAll] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(null);
   const adjustItem = useMutation({
     mutationFn: ({ itemId, payload }: { itemId: string; payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2] }) =>
       loadingPlansApi.adjustPlacedItem(plan.id, itemId, payload),
@@ -33,36 +34,53 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
       void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
-  const sequenceByPlacedItemId = useMemo(() => new Map(plan.steps.filter((step) => step.placedItemId).map((step) => [step.placedItemId!, step.sequence])), [plan.steps]);
-  const maxStep = plan.steps.length;
+  const selectedCandidate = plan.candidateDiagnostics?.candidates.find((candidate) => candidate.index === selectedCandidateIndex) ?? null;
+  const preview = selectedCandidate ? candidatePreview(selectedCandidate) : null;
+  const displayedPlacedItems = preview?.placedItems ?? plan.placedItems;
+  const displayedUnplacedItems = preview?.unplacedItems ?? plan.unplacedItems;
+  const displayedSteps = preview?.steps ?? plan.steps;
+  const displayedAlerts = preview?.alerts ?? plan.alerts;
+  const displayedMetrics = preview?.metrics ?? plan.metrics;
+  const displayedEvaluation = preview?.evaluation ?? plan.evaluation;
+  const displayedAlertCounts = preview?.alertCounts ?? plan.alertCounts;
+  const sequenceByPlacedItemId = useMemo(() => new Map(displayedSteps.filter((step) => step.placedItemId).map((step) => [step.placedItemId!, step.sequence])), [displayedSteps]);
+  const maxStep = displayedSteps.length;
   const visibleItems = useMemo(() => {
-    if (viewAll || maxStep === 0) return plan.placedItems;
-    return plan.placedItems.filter((item) => {
+    if (viewAll || maxStep === 0) return displayedPlacedItems;
+    return displayedPlacedItems.filter((item) => {
       const sequence = sequenceByPlacedItemId.get(item.id);
       return sequence !== undefined && sequence <= currentStep;
     });
-  }, [currentStep, maxStep, plan.placedItems, sequenceByPlacedItemId, viewAll]);
-  const selectedItem = plan.placedItems.find((item) => item.id === selectedItemId) ?? visibleItems.at(-1) ?? null;
-  const activeStep = plan.steps.find((step) => step.sequence === currentStep) ?? null;
-  const alertsByPlacedItemId = useMemo(() => buildAlertsByPlacedItemId(plan.alerts), [plan.alerts]);
+  }, [currentStep, displayedPlacedItems, maxStep, sequenceByPlacedItemId, viewAll]);
+  const selectedItem = displayedPlacedItems.find((item) => item.id === selectedItemId) ?? visibleItems.at(-1) ?? null;
+  const activeStep = displayedSteps.find((step) => step.sequence === currentStep) ?? null;
+  const alertsByPlacedItemId = useMemo(() => buildAlertsByPlacedItemId(displayedAlerts), [displayedAlerts]);
   const itemStatusByPlacedItemId = useMemo(() => buildItemStatusByPlacedItemId(alertsByPlacedItemId), [alertsByPlacedItemId]);
   const selectedItemAlerts = selectedItem ? (alertsByPlacedItemId.get(selectedItem.id) ?? []) : [];
-  const criticalAlerts = plan.alerts.filter((alert) => alert.severity === 'CRITICAL');
-  const placedItemLabelById = useMemo(() => new Map(plan.placedItems.map((item) => [item.id, `${item.productCode} #${item.unitIndex}`])), [plan.placedItems]);
+  const criticalAlerts = displayedAlerts.filter((alert) => alert.severity === 'CRITICAL');
+  const placedItemLabelById = useMemo(() => new Map(displayedPlacedItems.map((item) => [item.id, `${item.productCode} #${item.unitIndex}`])), [displayedPlacedItems]);
 
   useEffect(() => {
     setCurrentStep(plan.steps.length > 0 ? 1 : 0);
     setViewAll(false);
     setSelectedItemId(null);
+    setSelectedCandidateIndex(null);
   }, [plan.id, plan.steps.length]);
+
+  useEffect(() => {
+    setCurrentStep(displayedSteps.length > 0 ? 1 : 0);
+    setViewAll(false);
+    setSelectedItemId(null);
+  }, [displayedSteps.length, selectedCandidateIndex]);
 
   return (
     <div className="stack">
       <section className="card">
         <SectionTitle title={`Plan v${plan.version}`} subtitle={`${planStatusLabel(plan.planStatus)} / ${loadingMethodLabel(plan.loadingMethod)} / ${plan.isCurrent ? 'actual' : 'historico'}`} />
-        <MetricGrid metrics={plan.metrics} />
-        <PlanEvaluationPanel evaluation={plan.evaluation ?? undefined} />
-        <PlanCandidateDiagnosticsPanel diagnostics={plan.candidateDiagnostics} />
+        {selectedCandidate ? <p className="candidate-preview-copy">Previsualizando alternativa: <strong>{candidateNameLabel(selectedCandidate.name)}</strong>. El plan guardado sigue siendo {candidateNameLabel(plan.candidateDiagnostics?.winnerName ?? 'current')}.</p> : null}
+        <MetricGrid metrics={displayedMetrics} />
+        <PlanEvaluationPanel evaluation={displayedEvaluation ?? undefined} />
+        <PlanCandidateDiagnosticsPanel diagnostics={plan.candidateDiagnostics} selectedCandidateIndex={selectedCandidateIndex} onSelectCandidate={setSelectedCandidateIndex} />
       </section>
       <section className="card simulation-card">
         <SectionTitle title="Simulacion 3D de carga" subtitle="Secuencia operativa con altura real y posicion Z" />
@@ -72,22 +90,22 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
           <div className="simulation-side">
             <StepControls currentStep={currentStep} maxStep={maxStep} viewAll={viewAll} onPrevious={() => setCurrentStep((step) => Math.max(1, step - 1))} onNext={() => setCurrentStep((step) => Math.min(maxStep, step + 1))} onReset={() => { setCurrentStep(maxStep > 0 ? 1 : 0); setViewAll(false); }} onToggleViewAll={() => setViewAll((value) => !value)} />
             <StepInstructionPanel step={activeStep} maxStep={maxStep} viewAll={viewAll} visibleCount={visibleItems.length} criticalCount={criticalAlerts.length} />
-            <SelectedItemPanel item={selectedItem} sequence={selectedItem ? sequenceByPlacedItemId.get(selectedItem.id) : undefined} alerts={selectedItemAlerts} readOnly={plan.planStatus === PlanStatus.APPROVED} isSaving={adjustItem.isPending} error={adjustItem.error} onSave={(itemId, payload) => adjustItem.mutate({ itemId, payload })} />
+            <SelectedItemPanel item={selectedItem} sequence={selectedItem ? sequenceByPlacedItemId.get(selectedItem.id) : undefined} alerts={selectedItemAlerts} readOnly={Boolean(selectedCandidate) || plan.planStatus === PlanStatus.APPROVED} isSaving={adjustItem.isPending} error={adjustItem.error} onSave={(itemId, payload) => adjustItem.mutate({ itemId, payload })} />
           </div>
         </div>
       </section>
       <section className="grid two wide-left">
         <div className="card">
           <SectionTitle title="Vista superior" subtitle="Plano tecnico simplificado" />
-          <TruckCanvas items={plan.placedItems} truck={truck} itemStatusByPlacedItemId={itemStatusByPlacedItemId} />
+          <TruckCanvas items={displayedPlacedItems} truck={truck} itemStatusByPlacedItemId={itemStatusByPlacedItemId} />
         </div>
         <div className="card">
-          <PlanAlertsPanel alerts={plan.alerts} alertCounts={plan.alertCounts} placedItemLabelById={placedItemLabelById} />
+          <PlanAlertsPanel alerts={displayedAlerts} alertCounts={displayedAlertCounts} placedItemLabelById={placedItemLabelById} />
         </div>
       </section>
       <section className="grid two">
-        <DataTable title="Ubicados" headers={['Producto', 'Destino', 'X/Y/Z', 'L/A/H']} rows={plan.placedItems.map((item) => [item.productCode, item.destinationName ?? '-', `${item.xMm}/${item.yMm}/${item.zMm}`, `${item.lengthMm}/${item.widthMm}/${item.heightMm}`])} />
-        <DataTable title="No ubicados" headers={['Producto', 'Destino', 'Motivo']} rows={plan.unplacedItems.map((item) => [item.productCode, item.destinationName ?? '-', item.message])} />
+        <DataTable title="Ubicados" headers={['Producto', 'Destino', 'X/Y/Z', 'L/A/H']} rows={displayedPlacedItems.map((item) => [item.productCode, item.destinationName ?? '-', `${item.xMm}/${item.yMm}/${item.zMm}`, `${item.lengthMm}/${item.widthMm}/${item.heightMm}`])} />
+        <DataTable title="No ubicados" headers={['Producto', 'Destino', 'Motivo']} rows={displayedUnplacedItems.map((item) => [item.productCode, item.destinationName ?? '-', item.message])} />
       </section>
     </div>
   );
@@ -119,23 +137,25 @@ export function PlanEvaluationPanel({ evaluation }: { evaluation?: LoadingPlanEv
   );
 }
 
-export function PlanCandidateDiagnosticsPanel({ diagnostics }: { diagnostics?: LoadingPlanCandidateDiagnostics | null }) {
+export function PlanCandidateDiagnosticsPanel({ diagnostics, selectedCandidateIndex, onSelectCandidate }: { diagnostics?: LoadingPlanCandidateDiagnostics | null; selectedCandidateIndex?: number | null; onSelectCandidate?: (index: number | null) => void }) {
   if (!diagnostics) return null;
 
   const winner = diagnostics.candidates.find((candidate) => candidate.index === diagnostics.winnerIndex);
+  const activeIndex = selectedCandidateIndex ?? diagnostics.winnerIndex;
 
   return (
     <div className="candidate-diagnostics-panel">
       <div className="candidate-winner-card">
         <h3>Alternativas evaluadas</h3>
-        <p>El sistema compara estrategias internas y guarda el mejor plan.</p>
+        <p>Elegí una alternativa para verla completa en el camión. Solo la elegida por score queda guardada como plan actual.</p>
         <span>Elegida #{diagnostics.winnerIndex}</span>
         <strong>{candidateNameLabel(diagnostics.winnerName)}</strong>
         {winner ? <small>Puntaje {winner.score} / {winner.hardViolationCount} criticas</small> : null}
+        {onSelectCandidate ? <button type="button" className={selectedCandidateIndex === null ? 'active' : ''} onClick={() => onSelectCandidate(null)}>Ver plan guardado</button> : null}
       </div>
       <div className="candidate-list">
         {diagnostics.candidates.map((candidate) => (
-          <div className={`candidate-row${candidate.index === diagnostics.winnerIndex ? ' winner' : ''}`} key={`${candidate.index}-${candidate.name}`}>
+          <button type="button" className={`candidate-row${candidate.index === diagnostics.winnerIndex ? ' winner' : ''}${candidate.index === activeIndex ? ' active' : ''}`} key={`${candidate.index}-${candidate.name}`} onClick={() => onSelectCandidate?.(candidate.index)}>
             <div>
               <b>{candidateNameLabel(candidate.name)}</b>
               <span>Alternativa #{candidate.index}</span>
@@ -144,7 +164,7 @@ export function PlanCandidateDiagnosticsPanel({ diagnostics }: { diagnostics?: L
             <span>{candidate.hardViolationCount} criticas</span>
             <span>{candidate.placedItemCount} ubicados</span>
             <span>{candidate.unplacedItemCount} sin ubicar</span>
-          </div>
+          </button>
         ))}
       </div>
     </div>
@@ -381,6 +401,21 @@ export function buildPlacedItemAdjustmentPayload(values: PlacedItemAdjustmentFor
   };
 }
 
+function candidatePreview(candidate: LoadingPlanCandidateDetail) {
+  return {
+    placedItems: candidate.placedItems,
+    unplacedItems: candidate.unplacedItems,
+    steps: candidate.steps,
+    alerts: candidate.alerts,
+    metrics: candidate.metrics,
+    evaluation: candidate.evaluation,
+    alertCounts: {
+      critical: candidate.alerts.filter((alert) => alert.severity === 'CRITICAL').length,
+      warning: candidate.alerts.filter((alert) => alert.severity === 'WARNING').length,
+    },
+  };
+}
+
 function requiredIntegerValue(value: string) {
   return Number.parseInt(value.trim(), 10);
 }
@@ -488,6 +523,10 @@ function alertMessage(alert: PlanAlert) {
 
   if (alert.type === 'WEIGHT_IMBALANCE' && alert.message.startsWith('Zone load is concentrated')) return 'La carga quedo concentrada en un tercio del camion.';
   if (alert.type === 'MAX_WEIGHT_EXCEEDED' && alert.message.startsWith('Total load')) return 'La carga supera el limite permitido del camion o de una zona.';
+  if (alert.type === 'MAX_WEIGHT_EXCEEDED' && alert.message.startsWith('Truck zone')) {
+    const match = alert.message.match(/Truck zone ([A-Z_]+) load ([\d.]+)kg exceeds zone max ([\d.]+)kg/i);
+    if (match) return `La ${zoneTypeLabel(match[1])} carga ${formatKg(Number(match[2]))} y supera el maximo de zona ${formatKg(Number(match[3]))}.`;
+  }
   if (alert.type === 'UNPLACED_ITEM' && alert.message.startsWith('Product')) return 'Hay un bulto que no pudo ubicarse automaticamente.';
 
   return alert.message;

@@ -85,7 +85,7 @@ describe('LoadingPlanEvaluator', () => {
     expect(evaluation.alerts).toContainEqual(expect.objectContaining({
       severity: AlertSeverity.CRITICAL,
       type: AlertType.MAX_WEIGHT_EXCEEDED,
-      message: expect.stringContaining('zone'),
+      message: 'La zona cabina carga 1200.0 kg y supera el maximo de zona 1000.0 kg.',
     }));
   });
 

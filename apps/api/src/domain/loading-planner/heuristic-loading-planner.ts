@@ -199,6 +199,12 @@ export class HeuristicLoadingPlanner {
         hardViolationCount: candidate.result.evaluation.hardViolationCount,
         placedItemCount: candidate.result.placedItems.length,
         unplacedItemCount: candidate.result.unplacedItems.length,
+        placedItems: candidate.result.placedItems,
+        unplacedItems: candidate.result.unplacedItems,
+        steps: candidate.result.steps,
+        alerts: candidate.result.alerts,
+        metrics: candidate.result.metrics,
+        evaluation: candidate.result.evaluation,
       })),
     };
   }
@@ -420,10 +426,12 @@ export class HeuristicLoadingPlanner {
   private sideWeight(placedItems: PlannerPlacedItem[], truckWidth: number, side: 'left' | 'right') {
     const centerY = truckWidth / 2;
     return placedItems.reduce((sum, item) => {
-      const itemCenterY = item.yMm + item.widthMm / 2;
-      if (side === 'left' && itemCenterY <= centerY) return sum + item.weightKg;
-      if (side === 'right' && itemCenterY > centerY) return sum + item.weightKg;
-      return sum;
+      const leftWidthMm = Math.max(0, Math.min(item.yMm + item.widthMm, centerY) - item.yMm);
+      const rightWidthMm = Math.max(0, item.yMm + item.widthMm - Math.max(item.yMm, centerY));
+      const itemWidthMm = leftWidthMm + rightWidthMm;
+      if (itemWidthMm <= 0) return sum;
+
+      return sum + item.weightKg * (side === 'left' ? leftWidthMm : rightWidthMm) / itemWidthMm;
     }, 0);
   }
 

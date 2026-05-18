@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { PlanAlertsPanel, PlanCandidateDiagnosticsPanel, PlanEvaluationPanel, PlanStepInstructionPreview, buildPlacedItemAdjustmentPayload } from './planner-ui';
 
@@ -56,8 +57,8 @@ describe('PlanCandidateDiagnosticsPanel', () => {
       winnerIndex: 1,
       winnerName: 'light-first',
       candidates: [
-        { index: 0, name: 'current', score: 775, hardViolationCount: 1, placedItemCount: 2, unplacedItemCount: 0 },
-        { index: 1, name: 'light-first', score: 1050, hardViolationCount: 0, placedItemCount: 2, unplacedItemCount: 0 },
+        candidate({ index: 0, name: 'current', score: 775, hardViolationCount: 1 }),
+        candidate({ index: 1, name: 'light-first', score: 1050, hardViolationCount: 0 }),
       ],
     }} />);
 
@@ -70,6 +71,24 @@ describe('PlanCandidateDiagnosticsPanel', () => {
     expect(screen.getAllByText(/2 ubicados/i)).toHaveLength(2);
   });
 
+  it('selects an alternative for preview', async () => {
+    const user = userEvent.setup();
+    let selected: number | null = null;
+
+    const { container } = render(<PlanCandidateDiagnosticsPanel diagnostics={{
+      winnerIndex: 1,
+      winnerName: 'light-first',
+      candidates: [
+        candidate({ index: 0, name: 'current', score: 775, hardViolationCount: 1 }),
+        candidate({ index: 1, name: 'light-first', score: 1050, hardViolationCount: 0 }),
+      ],
+    }} selectedCandidateIndex={null} onSelectCandidate={(index) => { selected = index; }} />);
+
+    await user.click(within(container).getByRole('button', { name: /orden actual/i }));
+
+    expect(selected).toBe(0);
+  });
+
   it('renders nothing without diagnostics', () => {
     const { container } = render(<PlanCandidateDiagnosticsPanel diagnostics={undefined} />);
 
@@ -77,16 +96,33 @@ describe('PlanCandidateDiagnosticsPanel', () => {
   });
 });
 
+function candidate(overrides: { index: number; name: string; score: number; hardViolationCount: number }) {
+  return {
+    ...overrides,
+    placedItemCount: 2,
+    unplacedItemCount: 0,
+    placedItems: [],
+    unplacedItems: [],
+    steps: [],
+    alerts: [],
+    metrics: { placedItemCount: 2, unplacedItemCount: 0, criticalAlertCount: overrides.hardViolationCount, warningAlertCount: 0 },
+    evaluation: { score: overrides.score, hardViolationCount: overrides.hardViolationCount, softPenaltyTotal: 0, penalties: [] },
+  };
+}
+
 describe('planner alerts', () => {
   it('renders alert severity and known backend messages in Spanish', () => {
-    render(<PlanAlertsPanel alertCounts={{ critical: 0, warning: 2 }} alerts={[
+    render(<PlanAlertsPanel alertCounts={{ critical: 1, warning: 2 }} alerts={[
       { id: 'alert-1', severity: 'WARNING', type: 'WEIGHT_IMBALANCE', message: 'Lateral load differs by more than 20%: left 600.000kg, right 0.000kg.', createdAt: '2026-05-18T00:00:00.000Z' },
       { id: 'alert-2', severity: 'WARNING', type: 'WEIGHT_IMBALANCE', message: 'Zone load is concentrated in one third of the truck.', createdAt: '2026-05-18T00:00:00.000Z' },
+      { id: 'alert-3', severity: 'CRITICAL', type: 'MAX_WEIGHT_EXCEEDED', message: 'Truck zone DOOR_SIDE load 500.000kg exceeds zone max 400.000kg.', createdAt: '2026-05-18T00:00:00.000Z' },
     ]} />);
 
     expect(screen.getAllByText(/advertencia/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/izquierda 600.0 kg, derecha 0.0 kg/i)).toBeInTheDocument();
     expect(screen.getByText(/concentrada en un tercio del camion/i)).toBeInTheDocument();
+    expect(screen.getByText(/zona puerta carga 500.0 kg/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Truck zone/i)).not.toBeInTheDocument();
   });
 });
 
