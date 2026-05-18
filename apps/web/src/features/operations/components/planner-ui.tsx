@@ -59,7 +59,7 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
   return (
     <div className="stack">
       <section className="card">
-        <SectionTitle title={`Plan v${plan.version}`} subtitle={`${plan.planStatus} / ${plan.loadingMethod} / ${plan.isCurrent ? 'actual' : 'historico'}`} />
+        <SectionTitle title={`Plan v${plan.version}`} subtitle={`${planStatusLabel(plan.planStatus)} / ${loadingMethodLabel(plan.loadingMethod)} / ${plan.isCurrent ? 'actual' : 'historico'}`} />
         <MetricGrid metrics={plan.metrics} />
         <PlanEvaluationPanel evaluation={plan.evaluation ?? undefined} />
         <PlanCandidateDiagnosticsPanel diagnostics={plan.candidateDiagnostics} />
@@ -82,9 +82,7 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
           <TruckCanvas items={plan.placedItems} truck={truck} itemStatusByPlacedItemId={itemStatusByPlacedItemId} />
         </div>
         <div className="card">
-          <SectionTitle title="Alertas" subtitle={`${plan.alertCounts.critical} criticas / ${plan.alertCounts.warning} warnings`} />
-          {criticalAlerts.length > 0 ? <p className="approval-blocker">Plan con errores criticos: corregir antes de aprobar.</p> : null}
-          {plan.alerts.length === 0 ? <p className="muted">Sin alertas.</p> : <div className="list compact">{plan.alerts.map((alert) => <div className={`alert ${alert.severity.toLowerCase()}`} key={alert.id}><strong>{alert.severity}{alert.placedItemId ? ` / ${placedItemLabelById.get(alert.placedItemId) ?? 'bulto'}` : ''}</strong><span>{alert.message}</span></div>)}</div>}
+          <PlanAlertsPanel alerts={plan.alerts} alertCounts={plan.alertCounts} placedItemLabelById={placedItemLabelById} />
         </div>
       </section>
       <section className="grid two">
@@ -98,7 +96,7 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
 export function PlanEvaluationPanel({ evaluation }: { evaluation?: LoadingPlanEvaluation | null }) {
   if (!evaluation) return null;
 
-  const status = evaluation.hardViolationCount > 0 ? `${evaluation.hardViolationCount} hard violation(s)` : 'Sin violaciones hard';
+  const status = evaluation.hardViolationCount > 0 ? `${evaluation.hardViolationCount} violacion(es) criticas` : 'Sin violaciones criticas';
 
   return (
     <div className={`evaluation-panel${evaluation.hardViolationCount > 0 ? ' critical' : ''}`}>
@@ -111,9 +109,9 @@ export function PlanEvaluationPanel({ evaluation }: { evaluation?: LoadingPlanEv
         <span>Penalizaciones</span>
         {evaluation.penalties.length === 0 ? <p className="muted">Sin penalizaciones blandas.</p> : evaluation.penalties.map((penalty) => (
           <div className="penalty-row" key={penalty.code}>
-            <strong>{penalty.code}</strong>
+            <strong>{penaltyLabel(penalty.code)}</strong>
             <b>-{penalty.points} pts</b>
-            <span>{penalty.message}</span>
+            <span>{penaltyMessage(penalty.code, penalty.message)}</span>
           </div>
         ))}
       </div>
@@ -129,20 +127,21 @@ export function PlanCandidateDiagnosticsPanel({ diagnostics }: { diagnostics?: L
   return (
     <div className="candidate-diagnostics-panel">
       <div className="candidate-winner-card">
-        <h3>Candidatos evaluados</h3>
-        <span>Ganador #{diagnostics.winnerIndex}</span>
-        <strong>{diagnostics.winnerName}</strong>
-        {winner ? <small>Score {winner.score} / {winner.hardViolationCount} hard</small> : null}
+        <h3>Alternativas evaluadas</h3>
+        <p>El sistema compara estrategias internas y guarda el mejor plan.</p>
+        <span>Elegida #{diagnostics.winnerIndex}</span>
+        <strong>{candidateNameLabel(diagnostics.winnerName)}</strong>
+        {winner ? <small>Puntaje {winner.score} / {winner.hardViolationCount} criticas</small> : null}
       </div>
       <div className="candidate-list">
         {diagnostics.candidates.map((candidate) => (
           <div className={`candidate-row${candidate.index === diagnostics.winnerIndex ? ' winner' : ''}`} key={`${candidate.index}-${candidate.name}`}>
             <div>
-              <b>{candidate.name}</b>
-              <span>#{candidate.index}</span>
+              <b>{candidateNameLabel(candidate.name)}</b>
+              <span>Alternativa #{candidate.index}</span>
             </div>
-            <strong>Score {candidate.score}</strong>
-            <span>{candidate.hardViolationCount} hard</span>
+            <strong>Puntaje {candidate.score}</strong>
+            <span>{candidate.hardViolationCount} criticas</span>
             <span>{candidate.placedItemCount} ubicados</span>
             <span>{candidate.unplacedItemCount} sin ubicar</span>
           </div>
@@ -150,6 +149,71 @@ export function PlanCandidateDiagnosticsPanel({ diagnostics }: { diagnostics?: L
       </div>
     </div>
   );
+}
+
+export function PlanAlertsPanel({ alerts, alertCounts, placedItemLabelById = new Map() }: { alerts: PlanAlert[]; alertCounts: LoadingPlan['alertCounts']; placedItemLabelById?: Map<string, string> }) {
+  const criticalAlerts = alerts.filter((alert) => alert.severity === 'CRITICAL');
+
+  return (
+    <>
+      <SectionTitle title="Alertas" subtitle={`${alertCounts.critical} criticas / ${alertCounts.warning} advertencias`} />
+      {criticalAlerts.length > 0 ? <p className="approval-blocker">Plan con errores criticos: corregir antes de aprobar.</p> : null}
+      {alerts.length === 0 ? <p className="muted">Sin alertas.</p> : <div className="list compact">{alerts.map((alert) => <div className={`alert ${alert.severity.toLowerCase()}`} key={alert.id}><strong>{alertSeverityLabel(alert.severity)}{alert.placedItemId ? ` / ${placedItemLabelById.get(alert.placedItemId) ?? 'bulto'}` : ''}</strong><span>{alertMessage(alert)}</span></div>)}</div>}
+    </>
+  );
+}
+
+function penaltyLabel(code: string) {
+  const labels: Record<string, string> = {
+    'weight-imbalance': 'Desbalance de peso',
+    'load-length': 'Largo ocupado',
+    'unplaced-items': 'Bultos sin ubicar',
+  };
+
+  return labels[code] ?? code;
+}
+
+function penaltyMessage(code: string, fallback: string) {
+  const messages: Record<string, string> = {
+    'weight-imbalance': 'La distribucion izquierda/derecha quedo desbalanceada.',
+    'load-length': 'El plan usa largo del camion; cuanto menos largo ocupado, mejor.',
+    'unplaced-items': 'Hay bultos que no pudieron ubicarse automaticamente.',
+  };
+
+  return messages[code] ?? fallback;
+}
+
+function candidateNameLabel(name: string) {
+  const labels: Record<string, string> = {
+    current: 'Orden actual',
+    'light-first': 'Livianos primero',
+    'volume-first': 'Mayor volumen primero',
+    'target-zone': 'Agrupado por zona',
+  };
+
+  return labels[name] ?? name;
+}
+
+function planStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    GENERATED: 'Generado',
+    MODIFIED: 'Modificado',
+    APPROVED: 'Aprobado',
+    INVALID: 'Invalido',
+  };
+
+  return labels[status] ?? status;
+}
+
+function loadingMethodLabel(method: string) {
+  const labels: Record<string, string> = {
+    REAR: 'Carga trasera',
+    SIDE: 'Carga lateral',
+    TOP: 'Carga superior',
+    MIXED: 'Carga mixta',
+  };
+
+  return labels[method] ?? method;
 }
 
 function PlannerScene({ items, selectedItemId, sequenceByPlacedItemId, itemStatusByPlacedItemId, truck, onSelect }: { items: PlacedItem[]; selectedItemId: string | null; sequenceByPlacedItemId: Map<string, number>; itemStatusByPlacedItemId: Map<string, ItemAlertStatus>; truck: Truck | null; onSelect: (id: string) => void }) {
@@ -227,7 +291,7 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
         <Edges color={edgeColor} />
       </mesh>
       {alertStatus === 'critical' ? <Text position={[0, height / 2 + 0.42, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.24} color="#ffffff">INVALIDO</Text> : null}
-      {alertStatus === 'warning' ? <Text position={[0, height / 2 + 0.32, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.2} color="#2b1700">WARNING</Text> : null}
+      {alertStatus === 'warning' ? <Text position={[0, height / 2 + 0.32, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.2} color="#2b1700">ALERTA</Text> : null}
       {sequence ? <Text position={[0, height / 2 + 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={Math.max(0.18, Math.min(length, width) / 4)} color="#19110a">#{sequence}</Text> : null}
       {item.locked ? <Text position={[0, height / 2 + 0.34, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.18} color="#ffffff">LOCK</Text> : null}
     </group>
@@ -248,7 +312,11 @@ function StepControls({ currentStep, maxStep, viewAll, onPrevious, onNext, onRes
 
 function StepInstructionPanel({ step, maxStep, viewAll, visibleCount, criticalCount }: { step: LoadingPlan['steps'][number] | null; maxStep: number; viewAll: boolean; visibleCount: number; criticalCount: number }) {
   if (maxStep === 0) return <div className="instruction-panel"><strong>Sin pasos del backend</strong><p>Se muestra la carga completa porque este plan no trae secuencia operativa.</p></div>;
-  return <div className={`instruction-panel${criticalCount > 0 ? ' has-critical' : ''}`}><span>{viewAll ? 'Vista consolidada' : `Paso ${step?.sequence ?? '-'}`}</span><strong>{viewAll ? `${visibleCount} bultos ubicados` : (step?.title ?? 'Paso no encontrado')}</strong>{criticalCount > 0 ? <p className="danger-copy">Plan invalido: hay {criticalCount} alerta(s) critica(s). No aprobar hasta corregirlas.</p> : null}<p>{viewAll ? 'Todos los bultos del plan estan visibles para auditoria.' : (step?.instructions ?? 'Sin instruccion registrada.')}</p></div>;
+  return <div className={`instruction-panel${criticalCount > 0 ? ' has-critical' : ''}`}><span>{viewAll ? 'Vista consolidada' : `Paso ${step?.sequence ?? '-'}`}</span><strong>{viewAll ? `${visibleCount} bultos ubicados` : stepTitle(step)}</strong>{criticalCount > 0 ? <p className="danger-copy">Plan invalido: hay {criticalCount} alerta(s) critica(s). No aprobar hasta corregirlas.</p> : null}<p>{viewAll ? 'Todos los bultos del plan estan visibles para auditoria.' : stepInstructions(step)}</p></div>;
+}
+
+export function PlanStepInstructionPreview({ step }: { step: LoadingPlan['steps'][number] }) {
+  return <StepInstructionPanel step={step} maxStep={1} viewAll={false} visibleCount={1} criticalCount={0} />;
 }
 
 function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, onSave }: { item: PlacedItem | null; sequence?: number; alerts: PlanAlert[]; readOnly: boolean; isSaving: boolean; error: Error | null; onSave: (itemId: string, payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2]) => void }) {
@@ -323,7 +391,7 @@ function PlanCriticalBanner({ count }: { count: number }) {
 
 function ItemAlertBox({ alerts }: { alerts: PlanAlert[] }) {
   const headline = itemAlertHeadline(alerts);
-  return <div className={`item-alert-box ${alerts.some((alert) => alert.severity === 'CRITICAL') ? 'critical' : 'warning'}`}><strong>{headline}</strong>{alerts.map((alert) => <span key={alert.id}>{alert.message}</span>)}</div>;
+  return <div className={`item-alert-box ${alerts.some((alert) => alert.severity === 'CRITICAL') ? 'critical' : 'warning'}`}><strong>{headline}</strong>{alerts.map((alert) => <span key={alert.id}>{alertMessage(alert)}</span>)}</div>;
 }
 
 function truckDimensions(items: PlacedItem[], truck: Truck | null) {
@@ -404,4 +472,53 @@ function itemAlertHeadline(alerts: PlanAlert[]) {
   if (alerts.some((alert) => alert.type === 'OVERLAP')) return 'Ubicacion invalida: solapada con otro bulto';
   if (alerts.some((alert) => alert.severity === 'CRITICAL')) return 'Ubicacion invalida';
   return 'Advertencia del bulto';
+}
+
+function alertSeverityLabel(severity: string) {
+  if (severity === 'CRITICAL') return 'Critica';
+  if (severity === 'WARNING') return 'Advertencia';
+  return 'Informativa';
+}
+
+function alertMessage(alert: PlanAlert) {
+  if (alert.type === 'WEIGHT_IMBALANCE' && alert.message.startsWith('Lateral load differs')) {
+    const match = alert.message.match(/left ([\d.]+)kg, right ([\d.]+)kg/i);
+    if (match) return `El peso lateral difiere mas de 20%: izquierda ${formatKg(Number(match[1]))}, derecha ${formatKg(Number(match[2]))}.`;
+  }
+
+  if (alert.type === 'WEIGHT_IMBALANCE' && alert.message.startsWith('Zone load is concentrated')) return 'La carga quedo concentrada en un tercio del camion.';
+  if (alert.type === 'MAX_WEIGHT_EXCEEDED' && alert.message.startsWith('Total load')) return 'La carga supera el limite permitido del camion o de una zona.';
+  if (alert.type === 'UNPLACED_ITEM' && alert.message.startsWith('Product')) return 'Hay un bulto que no pudo ubicarse automaticamente.';
+
+  return alert.message;
+}
+
+function formatKg(value: number) {
+  return `${value.toFixed(1)} kg`;
+}
+
+function stepTitle(step: LoadingPlan['steps'][number] | null) {
+  if (!step) return 'Paso no encontrado';
+  const match = step.title.match(/^Load unit (\d+)$/i);
+  if (match) return `Cargar unidad ${match[1]}`;
+  return step.title;
+}
+
+function stepInstructions(step: LoadingPlan['steps'][number] | null) {
+  if (!step?.instructions) return 'Sin instruccion registrada.';
+
+  const match = step.instructions.match(/^Place product .+ in ([A-Z_]+) at x=(\d+)mm, y=(\d+)mm\.$/i);
+  if (match) return `Ubicar el bulto en ${zoneTypeLabel(match[1])}: x=${match[2]} mm, y=${match[3]} mm.`;
+
+  return step.instructions;
+}
+
+function zoneTypeLabel(zoneType: string) {
+  const labels: Record<string, string> = {
+    CABIN_SIDE: 'zona cabina',
+    CENTER: 'zona central',
+    DOOR_SIDE: 'zona puerta',
+  };
+
+  return labels[zoneType] ?? zoneType;
 }

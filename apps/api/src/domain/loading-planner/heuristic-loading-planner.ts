@@ -74,12 +74,13 @@ export class HeuristicLoadingPlanner {
       });
     }
 
+    const productCodeById = new Map(input.products.map((product) => [product.id, product.code]));
     const steps = placedItems.map((item) => ({
       sequence: item.sequence,
       productId: item.productId,
       unitIndex: item.unitIndex,
-      title: `Load unit ${item.unitIndex}`,
-      instructions: `Place product ${item.productId} in ${item.zoneType} at x=${item.xMm}mm, y=${item.yMm}mm.`,
+      title: `Cargar unidad ${item.unitIndex}`,
+      instructions: `Ubicar ${productCodeById.get(item.productId) ?? 'producto'} en ${zoneTypeLabel(item.zoneType)}: x=${item.xMm} mm, y=${item.yMm} mm.`,
     }));
     const baseAlerts = this.buildAlerts(input, placedItems, unplacedItems);
     const metrics = this.buildMetrics(input, placedItems, unplacedItems, baseAlerts);
@@ -317,7 +318,7 @@ export class HeuristicLoadingPlanner {
       productId: item.productId,
       severity: AlertSeverity.CRITICAL,
       type: AlertType.UNPLACED_ITEM,
-      message: `Product ${item.productId} unit ${item.unitIndex} was not placed: ${item.message}`,
+        message: `El producto ${item.productId}, unidad ${item.unitIndex}, no pudo ubicarse: ${item.message}`,
     }));
     const totalWeightKg = this.totalInputWeight(input.products);
 
@@ -325,7 +326,7 @@ export class HeuristicLoadingPlanner {
       alerts.push({
         severity: AlertSeverity.CRITICAL,
         type: AlertType.MAX_WEIGHT_EXCEEDED,
-        message: `Total load ${totalWeightKg.toFixed(3)}kg exceeds truck payload ${input.truck.maxPayloadKg.toFixed(3)}kg.`,
+        message: `La carga total (${formatKg(totalWeightKg)}) supera la capacidad del camion (${formatKg(input.truck.maxPayloadKg)}).`,
       });
     }
 
@@ -336,7 +337,7 @@ export class HeuristicLoadingPlanner {
       alerts.push({
         severity: AlertSeverity.WARNING,
         type: AlertType.WEIGHT_IMBALANCE,
-        message: `Lateral load differs by more than 20%: left ${leftWeightKg.toFixed(3)}kg, right ${rightWeightKg.toFixed(3)}kg.`,
+        message: `El peso lateral difiere mas de 20%: izquierda ${formatKg(leftWeightKg)}, derecha ${formatKg(rightWeightKg)}.`,
       });
     }
 
@@ -346,7 +347,7 @@ export class HeuristicLoadingPlanner {
       alerts.push({
         severity: AlertSeverity.WARNING,
         type: AlertType.WEIGHT_IMBALANCE,
-        message: 'Zone load is concentrated in one third of the truck.',
+        message: 'La carga quedo concentrada en un tercio del camion.',
       });
     }
 
@@ -436,4 +437,18 @@ export class HeuristicLoadingPlanner {
       { cabin: 0, center: 0, door: 0 },
     );
   }
+}
+
+function formatKg(value: number) {
+  return `${value.toFixed(1)} kg`;
+}
+
+function zoneTypeLabel(zoneType: TruckZoneType) {
+  const labels: Record<TruckZoneType, string> = {
+    [TruckZoneType.CABIN_SIDE]: 'zona cabina',
+    [TruckZoneType.CENTER]: 'zona central',
+    [TruckZoneType.DOOR_SIDE]: 'zona puerta',
+  };
+
+  return labels[zoneType] ?? zoneType;
 }

@@ -568,7 +568,7 @@ export class LoadingPlansService {
       alerts.push({
         severity: AlertSeverity.CRITICAL,
         type: AlertType.MAX_WEIGHT_EXCEEDED,
-        message: `Total load ${totalWeightKg.toFixed(3)}kg exceeds truck payload ${Number(truck.maxPayloadKg).toFixed(3)}kg.`,
+        message: `La carga total (${formatKg(totalWeightKg)}) supera la capacidad del camion (${formatKg(Number(truck.maxPayloadKg))}).`,
       });
     }
 
@@ -579,7 +579,7 @@ export class LoadingPlansService {
       alerts.push({
         severity: AlertSeverity.WARNING,
         type: AlertType.WEIGHT_IMBALANCE,
-        message: `Lateral load differs by more than 20%: left ${leftWeightKg.toFixed(3)}kg, right ${rightWeightKg.toFixed(3)}kg.`,
+        message: `El peso lateral difiere mas de 20%: izquierda ${formatKg(leftWeightKg)}, derecha ${formatKg(rightWeightKg)}.`,
       });
     }
 
@@ -787,4 +787,8 @@ export class LoadingPlansService {
 function decimalToNumber(value: Decimalish) {
   if (value === null || value === undefined) return undefined;
   return Number(value);
+}
+
+function formatKg(value: number) {
+  return `${value.toFixed(1)} kg`;
 }

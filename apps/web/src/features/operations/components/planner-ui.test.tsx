@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { PlanCandidateDiagnosticsPanel, PlanEvaluationPanel, buildPlacedItemAdjustmentPayload } from './planner-ui';
+import { PlanAlertsPanel, PlanCandidateDiagnosticsPanel, PlanEvaluationPanel, PlanStepInstructionPreview, buildPlacedItemAdjustmentPayload } from './planner-ui';
 
 describe('planner item adjustment form mapping', () => {
   it('maps numeric adjustment values to integers', () => {
@@ -38,8 +38,8 @@ describe('PlanEvaluationPanel', () => {
 
     expect(screen.getByRole('heading', { name: /score de plan/i })).toBeInTheDocument();
     expect(screen.getByText('823')).toBeInTheDocument();
-    expect(screen.getAllByText(/1 hard/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/weight-imbalance/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 violacion/i)).toBeInTheDocument();
+    expect(screen.getByText(/desbalance de peso/i)).toBeInTheDocument();
     expect(screen.getByText(/-50 pts/i)).toBeInTheDocument();
   });
 
@@ -61,12 +61,12 @@ describe('PlanCandidateDiagnosticsPanel', () => {
       ],
     }} />);
 
-    expect(screen.getByRole('heading', { name: /candidatos evaluados/i })).toBeInTheDocument();
-    expect(screen.getByText(/ganador #1/i)).toBeInTheDocument();
-    expect(screen.getAllByText('light-first')).toHaveLength(2);
-    expect(screen.getByText('current')).toBeInTheDocument();
-    expect(screen.getByText(/score 775/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/1 hard/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: /alternativas evaluadas/i })).toBeInTheDocument();
+    expect(screen.getByText(/elegida #1/i)).toBeInTheDocument();
+    expect(screen.getAllByText('Livianos primero')).toHaveLength(2);
+    expect(screen.getByText('Orden actual')).toBeInTheDocument();
+    expect(screen.getByText(/puntaje 775/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 criticas/i)).toBeInTheDocument();
     expect(screen.getAllByText(/2 ubicados/i)).toHaveLength(2);
   });
 
@@ -74,5 +74,38 @@ describe('PlanCandidateDiagnosticsPanel', () => {
     const { container } = render(<PlanCandidateDiagnosticsPanel diagnostics={undefined} />);
 
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('planner alerts', () => {
+  it('renders alert severity and known backend messages in Spanish', () => {
+    render(<PlanAlertsPanel alertCounts={{ critical: 0, warning: 2 }} alerts={[
+      { id: 'alert-1', severity: 'WARNING', type: 'WEIGHT_IMBALANCE', message: 'Lateral load differs by more than 20%: left 600.000kg, right 0.000kg.', createdAt: '2026-05-18T00:00:00.000Z' },
+      { id: 'alert-2', severity: 'WARNING', type: 'WEIGHT_IMBALANCE', message: 'Zone load is concentrated in one third of the truck.', createdAt: '2026-05-18T00:00:00.000Z' },
+    ]} />);
+
+    expect(screen.getAllByText(/advertencia/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/izquierda 600.0 kg, derecha 0.0 kg/i)).toBeInTheDocument();
+    expect(screen.getByText(/concentrada en un tercio del camion/i)).toBeInTheDocument();
+  });
+});
+
+describe('planner step instructions', () => {
+  it('renders legacy backend step instructions in Spanish without product ids', () => {
+    render(<PlanStepInstructionPreview step={{
+      id: 'step-1',
+      planId: 'plan-1',
+      placedItemId: 'placed-1',
+      sequence: 1,
+      title: 'Load unit 1',
+      instructions: 'Place product 3b69d807-b2c8-4a31-8344-8d8bb53a49be in DOOR_SIDE at x=2000mm, y=0mm.',
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    }} />);
+
+    expect(screen.getByText('Cargar unidad 1')).toBeInTheDocument();
+    expect(screen.getByText(/Ubicar el bulto en zona puerta/i)).toBeInTheDocument();
+    expect(screen.queryByText(/3b69d807/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/DOOR_SIDE/i)).not.toBeInTheDocument();
   });
 });
