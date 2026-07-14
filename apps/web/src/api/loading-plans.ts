@@ -1,5 +1,5 @@
 import { apiRequest } from './client';
-import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanReport } from './types';
+import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanReport, PlaceUnplacedItemPayload } from './types';
 
 export const loadingPlansApi = {
   current: (operationId: string) =>
@@ -13,6 +13,11 @@ export const loadingPlansApi = {
   adjustPlacedItem: (planId: string, placedItemId: string, payload: AdjustPlacedItemPayload) =>
     apiRequest<LoadingPlan>(`/loading-plans/${planId}/placed-items/${placedItemId}`, {
       method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  placeUnplacedItem: (planId: string, unplacedItemId: string, payload: PlaceUnplacedItemPayload) =>
+    apiRequest<LoadingPlan>(`/loading-plans/${planId}/unplaced-items/${unplacedItemId}/place`, {
+      method: 'POST',
       body: JSON.stringify(payload),
     }),
 };

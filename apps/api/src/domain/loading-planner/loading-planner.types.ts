@@ -25,7 +25,29 @@ export interface PlannerTruckInput {
   widthMm?: number;
   heightMm?: number;
   zones: PlannerTruckZoneInput[];
+  loadingLayers?: PlannerLoadingLayerInput[];
+  axleGroups?: PlannerAxleGroupInput[];
 }
+
+export interface PlannerLoadingLayerInput {
+  number: number;
+  label?: string;
+  groupLabel?: string;
+  minZMm: number;
+  maxZMm: number;
+}
+
+export interface PlannerAxleGroupInput {
+  code: string;
+  label: string;
+  startXMm: number;
+  endXMm: number;
+  maxWeightKg: number;
+  source?: string;
+  notes?: string;
+}
+
+export type AxleLoadStatusValue = 'OK' | 'EXCEEDED' | 'UNKNOWN';
 
 export interface PlannerDestinationInput {
   id: string;
@@ -59,6 +81,9 @@ export interface PlannerPlacedItem {
   unitIndex: number;
   truckZoneId?: string;
   zoneType: TruckZoneTypeValue;
+  layerNumber?: number;
+  layerLabel?: string;
+  layerGroupLabel?: string;
   xMm: number;
   yMm: number;
   zMm: number;
@@ -67,6 +92,7 @@ export interface PlannerPlacedItem {
   widthMm: number;
   heightMm: number;
   weightKg: number;
+  stackable?: boolean;
   sequence: number;
 }
 
@@ -114,6 +140,26 @@ export interface PlannerMetrics {
   centerOfGravityZ?: number;
 }
 
+export interface PlannerLoadingLayer {
+  number: number;
+  label: string;
+  groupLabel: string;
+  minZMm: number;
+  maxZMm: number;
+}
+
+export interface PlannerAxleLoadSnapshot {
+  axleGroupCode: string;
+  axleGroupLabel: string;
+  source?: string;
+  notes?: string;
+  startXMm: number;
+  endXMm: number;
+  maxWeightKg: number;
+  computedWeightKg: number;
+  status: AxleLoadStatusValue;
+}
+
 export interface PlannerEvaluationPenalty {
   code: string;
   points: number;
@@ -128,6 +174,12 @@ export interface PlannerEvaluation {
   alerts: PlannerAlert[];
 }
 
+export interface PlannerCandidateExplanation {
+  summary: string;
+  strengths: string[];
+  tradeoffs: string[];
+}
+
 export interface PlannerCandidateSummary {
   index: number;
   name: string;
@@ -135,6 +187,7 @@ export interface PlannerCandidateSummary {
   hardViolationCount: number;
   placedItemCount: number;
   unplacedItemCount: number;
+  explanation: PlannerCandidateExplanation;
 }
 
 export interface PlannerCandidateDetail extends PlannerCandidateSummary {
@@ -144,20 +197,30 @@ export interface PlannerCandidateDetail extends PlannerCandidateSummary {
   alerts: PlannerAlert[];
   metrics: PlannerMetrics;
   evaluation: PlannerEvaluation;
+  axleLoadSnapshots: PlannerAxleLoadSnapshot[];
+}
+
+export interface PlannerDiscardedCandidateSummary extends PlannerCandidateSummary {
+  reason: string;
 }
 
 export interface PlannerCandidateDiagnostics {
   winnerIndex: number;
   winnerName: string;
+  winnerExplanation: PlannerCandidateExplanation;
   candidates: PlannerCandidateDetail[];
+  bestPartialCandidate?: PlannerCandidateDetail;
+  discardedCandidates?: PlannerDiscardedCandidateSummary[];
 }
 
 export interface LoadingPlannerResult {
+  loadingLayers: PlannerLoadingLayer[];
   placedItems: PlannerPlacedItem[];
   unplacedItems: PlannerUnplacedItem[];
   steps: PlannerStep[];
   alerts: PlannerAlert[];
   metrics: PlannerMetrics;
   evaluation: PlannerEvaluation;
+  axleLoadSnapshots: PlannerAxleLoadSnapshot[];
   candidateDiagnostics?: PlannerCandidateDiagnostics;
 }

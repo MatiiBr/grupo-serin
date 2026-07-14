@@ -42,6 +42,7 @@ function placed(overrides: Partial<PlannerPlacedItem> = {}): PlannerPlacedItem {
 
 function result(overrides: Partial<Omit<LoadingPlannerResult, 'evaluation'>> = {}): Omit<LoadingPlannerResult, 'evaluation'> {
   return {
+    loadingLayers: [],
     placedItems: [placed()],
     unplacedItems: [],
     steps: [],
@@ -64,6 +65,7 @@ function result(overrides: Partial<Omit<LoadingPlannerResult, 'evaluation'>> = {
       loadLengthMm: 1000,
       maxHeightMm: 400,
     },
+    axleLoadSnapshots: [],
     ...overrides,
   };
 }
@@ -111,6 +113,37 @@ describe('LoadingPlanEvaluator', () => {
     }));
 
     expect(evaluation.hardViolationCount).toBe(1);
+    expect(evaluation.score).toBeLessThan(1000);
+  });
+
+  it('keeps a comparable nonzero score for invalid plans that place significant load', () => {
+    const placedItems = Array.from({ length: 8 }, (_, index) => placed({
+      productId: `placed-${index + 1}`,
+      unitIndex: 1,
+      xMm: index * 500,
+      sequence: index + 1,
+    }));
+    const unplacedItems = Array.from({ length: 4 }, (_, index) => ({
+      productId: `unplaced-${index + 1}`,
+      unitIndex: 1,
+      reason: UnplacedReason.NO_AVAILABLE_SPACE,
+      message: 'No space.',
+    }));
+
+    const evaluation = new LoadingPlanEvaluator().evaluate(input, result({
+      placedItems,
+      unplacedItems,
+      alerts: unplacedItems.map((item) => ({
+        productId: item.productId,
+        severity: AlertSeverity.CRITICAL,
+        type: AlertType.UNPLACED_ITEM,
+        message: item.message,
+      })),
+      metrics: { ...result().metrics, placedItemCount: 8, unplacedItemCount: 4, placedWeightKg: 4000, unplacedWeightKg: 2000, loadLengthMm: 4000 },
+    }));
+
+    expect(evaluation.hardViolationCount).toBeGreaterThanOrEqual(4);
+    expect(evaluation.score).toBeGreaterThan(0);
     expect(evaluation.score).toBeLessThan(1000);
   });
 });

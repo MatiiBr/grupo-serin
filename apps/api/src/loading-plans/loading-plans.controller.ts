@@ -2,6 +2,7 @@ import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Patch, Post } fro
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { RequireRoles } from '../auth/require-roles.decorator';
 import { AuthRole } from '../auth/roles';
+import { PlaceUnplacedItemDto } from './dto/place-unplaced-item.dto';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
 import { LoadingPlansService } from './loading-plans.service';
 
@@ -51,5 +52,17 @@ export class LoadingPlansController {
     @Headers('x-actor') actor?: string,
   ) {
     return this.loadingPlansService.updatePlacedItem(planId, placedItemId, dto, actor);
+  }
+
+  @Post('loading-plans/:planId/unplaced-items/:unplacedItemId/place')
+  @RequireRoles(AuthRole.LOADING_SUPERVISOR, AuthRole.LOGISTICS_MANAGER)
+  @ApiOkResponse({ description: 'Manually places an unplaced item and recalculates plan validation.' })
+  placeUnplacedItem(
+    @Param('planId', ParseUUIDPipe) planId: string,
+    @Param('unplacedItemId', ParseUUIDPipe) unplacedItemId: string,
+    @Body() dto: PlaceUnplacedItemDto,
+    @Headers('x-actor') actor?: string,
+  ) {
+    return this.loadingPlansService.placeUnplacedItem(planId, unplacedItemId, dto, actor);
   }
 }

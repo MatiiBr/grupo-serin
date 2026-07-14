@@ -6,6 +6,7 @@ const HARD_VIOLATION_PENALTY = 250;
 const UNPLACED_ITEM_PENALTY = 200;
 const WARNING_PENALTY = 50;
 const LOAD_LENGTH_DIVISOR = 1000;
+const MAX_INVALID_SCORE = 899;
 
 export class LoadingPlanEvaluator {
   evaluate(input: LoadingPlannerInput, result: Omit<LoadingPlannerResult, 'evaluation'>): PlannerEvaluation {
@@ -14,7 +15,8 @@ export class LoadingPlanEvaluator {
     const penalties = this.penalties(result);
     const softPenaltyTotal = penalties.reduce((sum, penalty) => sum + penalty.points, 0);
     const placedReward = result.placedItems.length * 25;
-    const score = Math.max(0, BASE_SCORE + placedReward - hardViolationCount * HARD_VIOLATION_PENALTY - softPenaltyTotal);
+    const rawScore = BASE_SCORE + placedReward - hardViolationCount * HARD_VIOLATION_PENALTY - softPenaltyTotal;
+    const score = this.scoreFrom(rawScore, hardViolationCount, result);
 
     return {
       score,
@@ -68,6 +70,17 @@ export class LoadingPlanEvaluator {
     }
 
     return penalties;
+  }
+
+  private scoreFrom(rawScore: number, hardViolationCount: number, result: Omit<LoadingPlannerResult, 'evaluation'>) {
+    if (rawScore > 0) return rawScore;
+    if (hardViolationCount === 0 || result.placedItems.length === 0) return 0;
+
+    const placedProgressScore = result.placedItems.length * 25 + Math.floor(result.metrics.placedWeightKg / 100);
+    const placementPenalty = Math.floor(result.metrics.loadLengthMm / LOAD_LENGTH_DIVISOR) + result.metrics.warningAlertCount * 3;
+    const unresolvedPenalty = hardViolationCount * 10 + result.unplacedItems.length * 5 + placementPenalty;
+
+    return Math.min(MAX_INVALID_SCORE, Math.max(1, placedProgressScore - unresolvedPenalty));
   }
 }
 

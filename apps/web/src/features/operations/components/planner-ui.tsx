@@ -6,16 +6,24 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { loadingPlansApi } from '../../../api/loading-plans';
 import { queryKeys } from '../../../api/queryKeys';
-import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanCandidateDetail, LoadingPlanCandidateDiagnostics, LoadingPlanEvaluation, PlacedItem, PlanAlert, Truck } from '../../../api/types';
+import type { AdjustPlacedItemPayload, LoadingPlan, LoadingPlanCandidateDetail, LoadingPlanCandidateDiagnostics, LoadingPlanEvaluation, PlacedItem, PlanAlert, PlaceUnplacedItemPayload, Truck, UnplacedItem } from '../../../api/types';
 import { MutationError, SectionTitle } from '../../../components/ui';
 import { DataTable, MetricGrid } from './operation-ui';
 
 type ItemAlertStatus = 'critical' | 'warning' | undefined;
 
 export interface PlacedItemAdjustmentFormValues {
-  xMm: string;
-  yMm: string;
-  zMm: string;
+  xCm: string;
+  yCm: string;
+  zCm: string;
+  rotationDeg: string;
+  locked?: boolean;
+}
+
+export interface UnplacedItemPlacementFormValues {
+  xCm: string;
+  yCm: string;
+  zCm: string;
   rotationDeg: string;
   locked?: boolean;
 }
@@ -29,6 +37,14 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
   const adjustItem = useMutation({
     mutationFn: ({ itemId, payload }: { itemId: string; payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2] }) =>
       loadingPlansApi.adjustPlacedItem(plan.id, itemId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.loadingPlan.current(operationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
+    },
+  });
+  const placeUnplacedItem = useMutation({
+    mutationFn: ({ itemId, payload }: { itemId: string; payload: PlaceUnplacedItemPayload }) =>
+      loadingPlansApi.placeUnplacedItem(plan.id, itemId, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.loadingPlan.current(operationId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
@@ -104,8 +120,8 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
         </div>
       </section>
       <section className="grid two">
-        <DataTable title="Ubicados" headers={['Producto', 'Destino', 'X/Y/Z', 'L/A/H']} rows={displayedPlacedItems.map((item) => [item.productCode, item.destinationName ?? '-', `${item.xMm}/${item.yMm}/${item.zMm}`, `${item.lengthMm}/${item.widthMm}/${item.heightMm}`])} />
-        <DataTable title="No ubicados" headers={['Producto', 'Destino', 'Motivo']} rows={displayedUnplacedItems.map((item) => [item.productCode, item.destinationName ?? '-', item.message])} />
+        <DataTable title="Ubicados" headers={['Producto', 'Destino', 'X/Y/Z', 'L/A/H']} rows={displayedPlacedItems.map((item) => [item.productCode, item.destinationName ?? '-', `${formatPosition(item.xMm)} / ${formatPosition(item.yMm)} / ${formatPosition(item.zMm)}`, `${formatDimension(item.lengthMm)} × ${formatDimension(item.widthMm)} × ${formatDimension(item.heightMm)}`])} />
+        <UnplacedItemsPanel items={displayedUnplacedItems} readOnly={Boolean(selectedCandidate) || plan.planStatus === PlanStatus.APPROVED} isSaving={placeUnplacedItem.isPending} error={placeUnplacedItem.error} onPlace={(itemId, payload) => placeUnplacedItem.mutate({ itemId, payload })} />
       </section>
     </div>
   );
@@ -140,33 +156,104 @@ export function PlanEvaluationPanel({ evaluation }: { evaluation?: LoadingPlanEv
 export function PlanCandidateDiagnosticsPanel({ diagnostics, selectedCandidateIndex, onSelectCandidate }: { diagnostics?: LoadingPlanCandidateDiagnostics | null; selectedCandidateIndex?: number | null; onSelectCandidate?: (index: number | null) => void }) {
   if (!diagnostics) return null;
 
-  const winner = diagnostics.candidates.find((candidate) => candidate.index === diagnostics.winnerIndex);
+  const discardedCandidates = diagnostics.discardedCandidates ?? [];
+  const bestPartialCandidate = diagnostics.bestPartialCandidate;
+  const winner = diagnostics.candidates.find((candidate) => candidate.index === diagnostics.winnerIndex)
+    ?? bestPartialCandidate
+    ?? discardedCandidates.find((candidate) => candidate.index === diagnostics.winnerIndex);
   const activeIndex = selectedCandidateIndex ?? diagnostics.winnerIndex;
 
   return (
     <div className="candidate-diagnostics-panel">
       <div className="candidate-winner-card">
-        <h3>Alternativas evaluadas</h3>
-        <p>Elegí una alternativa para verla completa en el camión. Solo la elegida por score queda guardada como plan actual.</p>
+        <h3>Alternativas válidas</h3>
+        <p>Elegí una alternativa válida para verla completa en el camión. Los intentos con reglas duras incumplidas quedan como diagnóstico, no como alternativa de carga.</p>
         <span>Elegida #{diagnostics.winnerIndex}</span>
         <strong>{candidateNameLabel(diagnostics.winnerName)}</strong>
         {winner ? <small>Puntaje {winner.score} / {winner.hardViolationCount} criticas</small> : null}
+        <CandidateExplanation explanation={diagnostics.winnerExplanation} />
         {onSelectCandidate ? <button type="button" className={selectedCandidateIndex === null ? 'active' : ''} onClick={() => onSelectCandidate(null)}>Ver plan guardado</button> : null}
       </div>
-      <div className="candidate-list">
+      <div className="candidate-list" aria-label="Alternativas válidas">
+        {diagnostics.candidates.length === 0 ? <p className="muted">No hay alternativas válidas completas para comparar. El plan guardado muestra el mejor resultado parcial encontrado.</p> : null}
+        {diagnostics.candidates.length === 0 && bestPartialCandidate ? <BestPartialCandidateNotice candidate={bestPartialCandidate} /> : null}
         {diagnostics.candidates.map((candidate) => (
-          <button type="button" className={`candidate-row${candidate.index === diagnostics.winnerIndex ? ' winner' : ''}${candidate.index === activeIndex ? ' active' : ''}`} key={`${candidate.index}-${candidate.name}`} onClick={() => onSelectCandidate?.(candidate.index)}>
-            <div>
-              <b>{candidateNameLabel(candidate.name)}</b>
-              <span>Alternativa #{candidate.index}</span>
-            </div>
+          <CandidateAlternativeButton key={`${candidate.index}-${candidate.name}`} candidate={candidate} isWinner={candidate.index === diagnostics.winnerIndex} isActive={candidate.index === activeIndex} onSelectCandidate={onSelectCandidate} />
+        ))}
+      </div>
+      {discardedCandidates.length > 0 ? <DiscardedCandidateDiagnostics candidates={discardedCandidates} /> : null}
+    </div>
+  );
+}
+
+function BestPartialCandidateNotice({ candidate }: { candidate: LoadingPlanCandidateDetail }) {
+  return (
+    <div className="candidate-row partial">
+      <div className="candidate-main">
+        <h4>Plan base parcial para completar manualmente</h4>
+        <span>{candidateNameLabel(candidate.name)} / intento #{candidate.index}</span>
+      </div>
+      <div className="candidate-stats" aria-label="Metricas del plan parcial">
+        <strong>Puntaje {candidate.score}</strong>
+        <span>{candidate.hardViolationCount} criticas</span>
+        <span>{candidate.placedItemCount} ubicados</span>
+        <span>{candidate.unplacedItemCount} sin ubicar</span>
+      </div>
+      <span className="candidate-summary">El plan guardado muestra este resultado parcial; completá los bultos sin ubicar desde la sección de pendientes.</span>
+    </div>
+  );
+}
+
+function CandidateAlternativeButton({ candidate, isWinner, isActive, onSelectCandidate }: { candidate: LoadingPlanCandidateDetail; isWinner: boolean; isActive: boolean; onSelectCandidate?: (index: number | null) => void }) {
+  return (
+    <button type="button" className={`candidate-row${isWinner ? ' winner' : ''}${isActive ? ' active' : ''}`} onClick={() => onSelectCandidate?.(candidate.index)}>
+      <div className="candidate-main">
+        <b>{candidateNameLabel(candidate.name)}</b>
+        <span>Alternativa #{candidate.index}</span>
+      </div>
+      <div className="candidate-stats" aria-label="Metricas de alternativa">
+        <strong>Puntaje {candidate.score}</strong>
+        <span>{candidate.hardViolationCount} criticas</span>
+        <span>{candidate.placedItemCount} ubicados</span>
+        <span>{candidate.unplacedItemCount} sin ubicar</span>
+      </div>
+      {candidate.explanation ? <span className="candidate-summary">{candidate.explanation.summary}</span> : null}
+    </button>
+  );
+}
+
+function DiscardedCandidateDiagnostics({ candidates }: { candidates: NonNullable<LoadingPlanCandidateDiagnostics['discardedCandidates']> }) {
+  return (
+    <div className="candidate-discarded-list" aria-label="Intentos descartados">
+      <h4>Intentos descartados</h4>
+      <p className="muted">No son alternativas seleccionables porque incumplen reglas duras.</p>
+      {candidates.map((candidate) => (
+        <div className="candidate-row discarded" key={`${candidate.index}-${candidate.name}`}>
+          <div className="candidate-main">
+            <b>{candidateNameLabel(candidate.name)}</b>
+            <span>Intento #{candidate.index}</span>
+          </div>
+          <div className="candidate-stats" aria-label="Metricas de intento descartado">
             <strong>Puntaje {candidate.score}</strong>
             <span>{candidate.hardViolationCount} criticas</span>
             <span>{candidate.placedItemCount} ubicados</span>
             <span>{candidate.unplacedItemCount} sin ubicar</span>
-          </button>
-        ))}
-      </div>
+          </div>
+          <span className="candidate-summary">{candidate.reason}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CandidateExplanation({ explanation }: { explanation?: LoadingPlanCandidateDiagnostics['winnerExplanation'] }) {
+  if (!explanation) return null;
+
+  return (
+    <div className="candidate-explanation">
+      <p>{explanation.summary}</p>
+      {explanation.strengths.length > 0 ? <div><b>Motivos</b><ul>{explanation.strengths.map((strength) => <li key={strength}>{strength}</li>)}</ul></div> : null}
+      {explanation.tradeoffs.length > 0 ? <div><b>Tradeoffs pendientes</b><ul>{explanation.tradeoffs.map((tradeoff) => <li key={tradeoff}>{tradeoff}</li>)}</ul></div> : null}
     </div>
   );
 }
@@ -178,9 +265,15 @@ export function PlanAlertsPanel({ alerts, alertCounts, placedItemLabelById = new
     <>
       <SectionTitle title="Alertas" subtitle={`${alertCounts.critical} criticas / ${alertCounts.warning} advertencias`} />
       {criticalAlerts.length > 0 ? <p className="approval-blocker">Plan con errores criticos: corregir antes de aprobar.</p> : null}
-      {alerts.length === 0 ? <p className="muted">Sin alertas.</p> : <div className="list compact">{alerts.map((alert) => <div className={`alert ${alert.severity.toLowerCase()}`} key={alert.id}><strong>{alertSeverityLabel(alert.severity)}{alert.placedItemId ? ` / ${placedItemLabelById.get(alert.placedItemId) ?? 'bulto'}` : ''}</strong><span>{alertMessage(alert)}</span></div>)}</div>}
+      {alerts.length === 0 ? <p className="muted">Sin alertas.</p> : <div className="list compact">{alerts.map((alert) => <div className={`alert ${alert.severity.toLowerCase()}`} key={alert.id}><strong>{alertTitle(alert, placedItemLabelById)}</strong><span>{alertMessage(alert)}</span></div>)}</div>}
     </>
   );
+}
+
+function alertTitle(alert: PlanAlert, placedItemLabelById: Map<string, string>) {
+  const severity = alertSeverityLabel(alert.severity);
+  const product = alertProductLabel(alert, placedItemLabelById);
+  return product ? `${severity}: ${product}` : severity;
 }
 
 function penaltyLabel(code: string) {
@@ -203,12 +296,18 @@ function penaltyMessage(code: string, fallback: string) {
   return messages[code] ?? fallback;
 }
 
-function candidateNameLabel(name: string) {
+export function candidateNameLabel(name: string) {
   const labels: Record<string, string> = {
-    current: 'Orden actual',
+    current: 'Base automática',
+    base: 'Base automática',
     'light-first': 'Livianos primero',
+    'large-footprint-first': 'Mayor huella primero',
     'volume-first': 'Mayor volumen primero',
     'target-zone': 'Agrupado por zona',
+    'balance-lateral': 'Balance lateral',
+    'long-first': 'Largos primero',
+    'stack-friendly': 'Apilado seguro',
+    'best-fit-compact': 'Compactación eficiente',
   };
 
   return labels[name] ?? name;
@@ -345,9 +444,9 @@ function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, 
   useEffect(() => {
     if (!item) return;
     reset({
-      xMm: item.xMm.toString(),
-      yMm: item.yMm.toString(),
-      zMm: item.zMm.toString(),
+      xCm: millimetersToCentimetersInput(item.xMm),
+      yCm: millimetersToCentimetersInput(item.yMm),
+      zCm: millimetersToCentimetersInput(item.zMm),
       rotationDeg: item.rotationDeg.toString(),
       locked: item.locked,
     });
@@ -360,13 +459,13 @@ function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, 
   const rows = [
     ['Paso', sequence ? `#${sequence}` : '-'],
     ['Codigo', item.productCode],
-    ['Nombre', item.productName],
+    ['Nombre', productDisplayName(item.productName)],
     ['Familia', item.productFamily],
     ['Destino', item.destinationName ?? '-'],
-    ['Posicion', `x ${item.xMm} / y ${item.yMm} / z ${item.zMm} mm`],
-    ['Dimensiones', `${item.lengthMm} x ${item.widthMm} x ${item.heightMm} mm`],
+    ['Posicion', `x ${formatPosition(item.xMm)} / y ${formatPosition(item.yMm)} / z ${formatPosition(item.zMm)}`],
+    ['Dimensiones', `${formatDimension(item.lengthMm)} × ${formatDimension(item.widthMm)} × ${formatDimension(item.heightMm)}`],
     ['Rotacion', `${item.rotationDeg} deg`],
-    ['Altura piso', item.zMm === 0 ? 'En piso (z=0)' : `Apilado z=${item.zMm} mm`],
+    ['Altura piso', item.zMm === 0 ? 'En piso (z=0)' : `Apilado z=${formatPosition(item.zMm)}`],
     ['Estado', `${item.manuallyAdjusted ? 'Manual' : 'Automatico'}${item.locked ? ' / bloqueado' : ''}`],
   ];
   return (
@@ -379,9 +478,9 @@ function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, 
         key={item.id}
         onSubmit={onSubmit}
       >
-        <label>X mm<input type="number" min="0" required {...register('xMm', { required: true })} /></label>
-        <label>Y mm<input type="number" min="0" required {...register('yMm', { required: true })} /></label>
-        <label>Z mm<input type="number" min="0" required {...register('zMm', { required: true })} /></label>
+        <label>X cm<input type="number" min="0" step="0.1" required {...register('xCm', { required: true })} /></label>
+        <label>Y cm<input type="number" min="0" step="0.1" required {...register('yCm', { required: true })} /></label>
+        <label>Z cm<input type="number" min="0" step="0.1" required {...register('zCm', { required: true })} /></label>
         <label>Rotacion<input type="number" min="0" step="90" required {...register('rotationDeg', { required: true })} /></label>
         <label className="check wide"><input type="checkbox" {...register('locked')} /> Bloquear bulto</label>
         <button type="submit" disabled={isSaving}>{isSaving ? 'Guardando' : 'Guardar ajuste'}</button>
@@ -391,14 +490,67 @@ function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, 
   );
 }
 
+function UnplacedItemsPanel({ items, readOnly, isSaving, error, onPlace }: { items: UnplacedItem[]; readOnly: boolean; isSaving: boolean; error: Error | null; onPlace: (itemId: string, payload: PlaceUnplacedItemPayload) => void }) {
+  return (
+    <div className="card">
+      <SectionTitle title="No ubicados" subtitle={items.length === 0 ? 'Todos los bultos fueron ubicados.' : 'Podés ubicar manualmente los pendientes.'} />
+      {items.length === 0 ? <p className="muted">Sin bultos pendientes.</p> : <div className="list compact">{items.map((item) => <UnplacedItemPlacementCard key={item.id} item={item} readOnly={readOnly} isSaving={isSaving} onPlace={onPlace} />)}</div>}
+      <MutationError error={error} />
+    </div>
+  );
+}
+
+function UnplacedItemPlacementCard({ item, readOnly, isSaving, onPlace }: { item: UnplacedItem; readOnly: boolean; isSaving: boolean; onPlace: (itemId: string, payload: PlaceUnplacedItemPayload) => void }) {
+  const { handleSubmit, register } = useForm<UnplacedItemPlacementFormValues>({
+    defaultValues: { xCm: '0', yCm: '0', zCm: '0', rotationDeg: '0', locked: true },
+  });
+  const onSubmit = handleSubmit((values) => onPlace(item.id, buildUnplacedItemPlacementPayload(values)));
+
+  return (
+    <div className="unplaced-card">
+      <div>
+        <strong>{item.productCode} · {productDisplayName(item.productName)}</strong>
+        <span>{item.destinationName ?? 'Sin destino'} · {unplacedMessage(item.message)}</span>
+      </div>
+      {readOnly ? <p className="approved-copy">No se puede ubicar manualmente en esta vista.</p> : <form className="adjust-form" onSubmit={onSubmit}>
+        <label>X cm<input type="number" min="0" step="0.1" required {...register('xCm', { required: true })} /></label>
+        <label>Y cm<input type="number" min="0" step="0.1" required {...register('yCm', { required: true })} /></label>
+        <label>Z cm<input type="number" min="0" step="0.1" required {...register('zCm', { required: true })} /></label>
+        <label>Rotacion<input type="number" min="0" step="90" required {...register('rotationDeg', { required: true })} /></label>
+        <label className="check wide"><input type="checkbox" {...register('locked')} /> Bloquear bulto</label>
+        <button type="submit" disabled={isSaving}>{isSaving ? 'Ubicando' : 'Ubicar manualmente'}</button>
+      </form>}
+    </div>
+  );
+}
+
 export function buildPlacedItemAdjustmentPayload(values: PlacedItemAdjustmentFormValues): AdjustPlacedItemPayload {
   return {
-    xMm: requiredIntegerValue(values.xMm),
-    yMm: requiredIntegerValue(values.yMm),
-    zMm: requiredIntegerValue(values.zMm),
+    xMm: centimetersToMillimeters(values.xCm),
+    yMm: centimetersToMillimeters(values.yCm),
+    zMm: centimetersToMillimeters(values.zCm),
     rotationDeg: requiredIntegerValue(values.rotationDeg),
     locked: Boolean(values.locked),
   };
+}
+
+export function buildUnplacedItemPlacementPayload(values: UnplacedItemPlacementFormValues): PlaceUnplacedItemPayload {
+  return {
+    xMm: centimetersToMillimeters(values.xCm),
+    yMm: centimetersToMillimeters(values.yCm),
+    zMm: centimetersToMillimeters(values.zCm),
+    rotationDeg: requiredIntegerValue(values.rotationDeg),
+    locked: Boolean(values.locked),
+  };
+}
+
+export function formatPosition(valueMm: number) {
+  return `${(valueMm / 1000).toFixed(2)} m`;
+}
+
+export function formatDimension(valueMm: number) {
+  if (valueMm >= 1000) return `${(valueMm / 1000).toFixed(2)} m`;
+  return `${Math.round(valueMm / 10)} cm`;
 }
 
 function candidatePreview(candidate: LoadingPlanCandidateDetail) {
@@ -418,6 +570,15 @@ function candidatePreview(candidate: LoadingPlanCandidateDetail) {
 
 function requiredIntegerValue(value: string) {
   return Number.parseInt(value.trim(), 10);
+}
+
+function centimetersToMillimeters(value: string) {
+  return Math.round(Number.parseFloat(value.trim()) * 10);
+}
+
+function millimetersToCentimetersInput(valueMm: number) {
+  const valueCm = valueMm / 10;
+  return Number.isInteger(valueCm) ? valueCm.toString() : valueCm.toFixed(1);
 }
 
 function PlanCriticalBanner({ count }: { count: number }) {
@@ -472,7 +633,7 @@ export function TruckCanvas({ items, truck, itemStatusByPlacedItemId }: { items:
             width: `${Math.max(4, (item.lengthMm / bounds.maxX) * 100)}%`,
             height: `${Math.max(8, (item.widthMm / bounds.maxY) * 100)}%`,
           }}
-          title={`${item.productCode} ${item.lengthMm}x${item.widthMm}${item.locked ? ' bloqueado' : ''}`}
+          title={`${item.productCode} ${formatDimension(item.lengthMm)} × ${formatDimension(item.widthMm)}${item.locked ? ' bloqueado' : ''}`}
         >
           {item.productCode}
         </div>
@@ -527,9 +688,35 @@ function alertMessage(alert: PlanAlert) {
     const match = alert.message.match(/Truck zone ([A-Z_]+) load ([\d.]+)kg exceeds zone max ([\d.]+)kg/i);
     if (match) return `La ${zoneTypeLabel(match[1])} carga ${formatKg(Number(match[2]))} y supera el maximo de zona ${formatKg(Number(match[3]))}.`;
   }
-  if (alert.type === 'UNPLACED_ITEM' && alert.message.startsWith('Product')) return 'Hay un bulto que no pudo ubicarse automaticamente.';
+  if (alert.type === 'UNPLACED_ITEM' && alert.message.startsWith('El producto')) {
+    const unitMatch = alert.message.match(/unidad (\d+)/i);
+    return `No pudimos ubicar${unitMatch ? ` la unidad ${unitMatch[1]}` : ' este bulto'}: ${unplacedMessage(alert.message)}.`;
+  }
+  if (alert.type === 'UNPLACED_ITEM' && alert.message.startsWith('Product')) return 'No pudimos ubicar este bulto automaticamente.';
+  if (alert.type === 'UNPLACED_ITEM' && alert.message.startsWith('No floor space available')) return 'No hay espacio disponible en piso para este bulto.';
 
   return alert.message;
+}
+
+function alertProductLabel(alert: PlanAlert, placedItemLabelById = new Map<string, string>()) {
+  const name = productDisplayName(alert.productName);
+  if (alert.productCode && name && name !== alert.productCode) return `${alert.productCode} · ${name}`;
+  if (alert.productCode) return alert.productCode;
+  if (name) return name;
+  if (alert.placedItemId) return placedItemLabelById.get(alert.placedItemId) ?? 'Bulto';
+  return 'Bulto';
+}
+
+function productDisplayName(name?: string | null) {
+  if (!name) return '';
+  return name.split('|')[0].trim();
+}
+
+function unplacedMessage(message: string) {
+  if (message.includes('No floor space available')) return 'no hay espacio disponible en piso ni en zonas alternativas';
+  if (message.includes('No stack support available')) return 'no hay apoyo seguro para apilar';
+  if (message.startsWith('Product') || message.startsWith('El producto')) return 'no pudo ubicarse automaticamente';
+  return message;
 }
 
 function formatKg(value: number) {
@@ -547,7 +734,7 @@ function stepInstructions(step: LoadingPlan['steps'][number] | null) {
   if (!step?.instructions) return 'Sin instruccion registrada.';
 
   const match = step.instructions.match(/^Place product .+ in ([A-Z_]+) at x=(\d+)mm, y=(\d+)mm\.$/i);
-  if (match) return `Ubicar el bulto en ${zoneTypeLabel(match[1])}: x=${match[2]} mm, y=${match[3]} mm.`;
+  if (match) return `Ubicar el bulto en ${zoneTypeLabel(match[1])}: x=${formatPosition(Number(match[2]))}, y=${formatPosition(Number(match[3]))}.`;
 
   return step.instructions;
 }

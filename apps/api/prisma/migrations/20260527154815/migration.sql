@@ -1,0 +1,5 @@
+-- RenameIndex
+ALTER INDEX "OperationDestinationAssignment_operationId_destinationCatalogId" RENAME TO "OperationDestinationAssignment_operationId_destinationCatal_key";
+
+-- RenameIndex
+ALTER INDEX "OperationProductAssignment_operationId_operationDestinationId_i" RENAME TO "OperationProductAssignment_operationId_operationDestination_idx";

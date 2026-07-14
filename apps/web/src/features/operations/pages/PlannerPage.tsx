@@ -26,9 +26,9 @@ export function PlannerPage({ operationId }: { operationId: string }) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
   });
-  const plan = generatePlan.data ?? currentPlan.data;
+  const plan = generatePlan.data ?? approvePlan.data ?? currentPlan.data;
   const criticalCount = plan?.alertCounts.critical ?? 0;
-  const isApproved = plan?.planStatus === PlanStatus.APPROVED;
+  const isApproved = !generatePlan.isPending && plan?.planStatus === PlanStatus.APPROVED;
 
   return (
     <main className="stack">
@@ -40,14 +40,15 @@ export function PlannerPage({ operationId }: { operationId: string }) {
         </div>
         <div className="actions">
           {plan ? <button className="ghost" type="button" onClick={() => navigate(`/operations/${operationId}/report`)}>Ver reporte</button> : null}
-          {plan ? <button type="button" disabled={approvePlan.isPending || criticalCount > 0 || isApproved} onClick={() => approvePlan.mutate(plan.id)}>{isApproved ? 'Plan aprobado' : approvePlan.isPending ? 'Aprobando' : 'Aprobar plan'}</button> : null}
-          <button disabled={generatePlan.isPending || isApproved} onClick={() => generatePlan.mutate()}>{isApproved ? 'Plan aprobado' : 'Generar plan'}</button>
+          {plan && !isApproved ? <button type="button" disabled={approvePlan.isPending || criticalCount > 0} onClick={() => approvePlan.mutate(plan.id)}>{approvePlan.isPending ? 'Aprobando' : 'Aprobar plan'}</button> : null}
+          {!isApproved ? <button disabled={generatePlan.isPending} onClick={() => generatePlan.mutate()}>{generatePlan.isPending ? 'Generando' : 'Generar plan'}</button> : null}
         </div>
       </section>
       <MutationError error={generatePlan.error} />
       <MutationError error={approvePlan.error} />
       {plan && criticalCount > 0 ? <p className="approval-blocker">Aprobacion bloqueada: el plan tiene {criticalCount} alerta(s) critica(s).</p> : null}
       {isApproved ? <p className="approved-copy">Plan aprobado. Los ajustes manuales quedan en modo lectura.</p> : null}
+      {plan?.planStatus === PlanStatus.GENERATED && !isApproved ? <p className="muted">Plan generado pendiente de aprobación.</p> : null}
       {currentPlan.isLoading && !plan ? <EmptyState title="Cargando plan" text="Buscando plan vigente." /> : null}
       {currentPlan.error && !plan ? <EmptyState title="Sin plan vigente" text="Genera un plan cuando camion y productos esten cargados." /> : null}
       {plan && <PlanDetail plan={plan} operationId={operationId} truck={operation.data?.truck ?? null} />}

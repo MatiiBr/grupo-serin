@@ -1,11 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { AlertSeverity, AlertType, AuditAction, AuditSource, OperationStatus, PlanStatus, Prisma, TruckZoneType } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { HeuristicLoadingPlanner } from '../domain/loading-planner/heuristic-loading-planner';
 import { Bounds, isWithinBounds, overlaps } from '../domain/loading-planner/geometry';
-import { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loading-planner/loading-planner.types';
+import { applyLoadingLayersToPlacedItems, calculateAxleLoadSnapshots } from '../domain/loading-planner/load-support';
+import { LoadingPlannerInput, LoadingPlannerResult, PlannerCandidateDetail } from '../domain/loading-planner/loading-planner.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildLoadingPlanCandidateDiagnosticsDto, buildLoadingPlanEvaluationDto } from './loading-plan-evaluation.dto';
+import { PlaceUnplacedItemDto } from './dto/place-unplaced-item.dto';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
 
 const loadingPlanInclude = Prisma.validator<Prisma.LoadingPlanInclude>()({
@@ -22,7 +25,7 @@ const loadingPlanInclude = Prisma.validator<Prisma.LoadingPlanInclude>()({
     include: { product: { include: { destination: true } } },
   },
   steps: { orderBy: { sequence: 'asc' } },
-  alerts: { orderBy: [{ severity: 'desc' }, { createdAt: 'asc' }] },
+  alerts: { orderBy: [{ severity: 'desc' }, { createdAt: 'asc' }], include: { product: true } },
   metrics: true,
 });
 
@@ -49,6 +52,11 @@ type RecalculationPlan = Prisma.LoadingPlanGetPayload<{
 }>;
 type RecalculatedAlert = Omit<Prisma.LoadAlertCreateManyInput, 'planId'>;
 type RecalculationTruckZone = NonNullable<RecalculationPlan['operation']['truck']>['zones'][number];
+type LoadingLayerRow = { id: string; number: number; label: string; groupLabel: string; minZMm: number; maxZMm: number; notes: string | null };
+type AxleGroupRow = { id: string; code: string; label: string; startXMm: number; endXMm: number; maxWeightKg: Prisma.Decimal | null; source: string | null; notes: string | null };
+type AxleLoadSnapshotRow = { axleGroupCode: string; axleGroupLabel: string; source: string | null; notes: string | null; startXMm: number; endXMm: number; maxWeightKg: Prisma.Decimal | null; computedWeightKg: Prisma.Decimal; status: 'OK' | 'EXCEEDED' | 'UNKNOWN' };
+type PlacedItemLayerRow = { placedItemId: string; number: number; label: string; groupLabel: string };
+type PlanDomain = Pick<LoadingPlannerResult, 'loadingLayers' | 'axleLoadSnapshots'> & { placedItemLayers: PlacedItemLayerRow[] };
 
 @Injectable()
 export class LoadingPlansService {
@@ -86,7 +94,18 @@ export class LoadingPlansService {
       throw new BadRequestException('Operation must have at least one product before generating a loading plan.');
     }
 
-    const result = this.planner.generate(this.toPlannerInput(operation));
+    const plannerInput = this.toPlannerInput(operation);
+    plannerInput.truck.loadingLayers = await this.loadTruckLoadingLayers(operation.truck.id);
+    plannerInput.truck.axleGroups = (await this.loadTruckAxleGroups(operation.truck.id)).map((group) => ({
+      code: group.code,
+      label: group.label,
+      startXMm: group.startXMm,
+      endXMm: group.endXMm,
+      maxWeightKg: decimalToNumber(group.maxWeightKg) ?? 0,
+      source: group.source ?? undefined,
+      notes: group.notes ?? undefined,
+    }));
+    const result = this.planner.generate(plannerInput);
     const version = (operation.plans[0]?.version ?? 0) + 1;
 
     const plan = await this.prisma.$transaction(async (tx) => {
@@ -105,6 +124,8 @@ export class LoadingPlansService {
         },
       });
 
+      const layerIdByNumber = await this.ensureLoadingLayers(tx, operation.truck!.id, result.loadingLayers);
+
       const placedItemIdByUnit = new Map<string, string>();
       for (const item of result.placedItems) {
         const placed = await tx.placedItem.create({
@@ -122,6 +143,11 @@ export class LoadingPlansService {
             heightMm: item.heightMm,
           },
         });
+
+        const layerId = item.layerNumber ? layerIdByNumber.get(item.layerNumber) : undefined;
+        if (layerId) {
+          await tx.$executeRaw`UPDATE "PlacedItem" SET "loadingLayerId" = ${layerId}, "updatedAt" = NOW() WHERE "id" = ${placed.id}`;
+        }
 
         placedItemIdByUnit.set(this.unitKey(item.productId, item.unitIndex), placed.id);
       }
@@ -169,6 +195,8 @@ export class LoadingPlansService {
         },
       });
 
+      await this.createAxleLoadSnapshots(tx, createdPlan.id, operation.truck!.id, result.axleLoadSnapshots);
+
       await tx.loadOperation.update({
         where: { id: operationId },
         data: { status: OperationStatus.PLAN_GENERATED },
@@ -177,7 +205,11 @@ export class LoadingPlansService {
       return tx.loadingPlan.findUniqueOrThrow({ where: { id: createdPlan.id }, include: loadingPlanInclude });
     });
 
-    return this.toDto(plan, result.candidateDiagnostics, operation.products);
+    return this.toDto(plan, result.candidateDiagnostics, operation.products, {
+      loadingLayers: result.loadingLayers,
+      axleLoadSnapshots: result.axleLoadSnapshots,
+      placedItemLayers: [],
+    });
   }
 
   async findCurrent(operationId: string) {
@@ -193,7 +225,7 @@ export class LoadingPlansService {
       throw new NotFoundException('Current loading plan not found for this operation.');
     }
 
-    return this.toDto(plan);
+    return this.toDto(plan, undefined, undefined, await this.loadPlanDomain(plan.id));
   }
 
   async findOne(id: string) {
@@ -203,7 +235,7 @@ export class LoadingPlansService {
       throw new NotFoundException('Loading plan not found.');
     }
 
-    return this.toDto(plan);
+    return this.toDto(plan, undefined, undefined, await this.loadPlanDomain(plan.id));
   }
 
   async approve(planId: string, actor?: string) {
@@ -312,6 +344,27 @@ export class LoadingPlansService {
     const updatedItem = adjustedItems.find((item) => item.id === placedItemId)!;
     const truckZoneId = this.zoneForItem(plan, updatedItem);
     const validation = this.recalculatePlan(plan, adjustedItems);
+    const truckId = plan.operation.truck!.id;
+    const loadingLayerRows = await this.loadTruckLoadingLayerRows(this.prisma, truckId);
+    const layeredItems = applyLoadingLayersToPlacedItems(adjustedItems, loadingLayerRows);
+    const updatedLayerId = layeredItems.find((item) => item.id === placedItemId)?.loadingLayerId ?? null;
+    const axleGroups = await this.loadTruckAxleGroups(truckId);
+    const axleLoadSnapshots = calculateAxleLoadSnapshots(
+      axleGroups.map((group) => ({
+        code: group.code,
+        label: group.label,
+        startXMm: group.startXMm,
+        endXMm: group.endXMm,
+        maxWeightKg: decimalToNumber(group.maxWeightKg) ?? 0,
+        source: group.source ?? undefined,
+        notes: group.notes ?? undefined,
+      })),
+      adjustedItems.map((item) => ({
+        xMm: item.xMm,
+        lengthMm: item.lengthMm ?? 0,
+        weightKg: decimalToNumber(item.product.weightKg) ?? 0,
+      })),
+    );
 
     const updatedPlan = await this.prisma.$transaction(async (tx) => {
       await tx.placedItem.update({
@@ -329,6 +382,7 @@ export class LoadingPlansService {
           truckZoneId,
         },
       });
+      await tx.$executeRaw`UPDATE "PlacedItem" SET "loadingLayerId" = ${updatedLayerId}, "updatedAt" = NOW() WHERE "id" = ${placedItemId}`;
 
       await tx.loadAlert.deleteMany({ where: { planId } });
       if (validation.alerts.length > 0) {
@@ -340,6 +394,8 @@ export class LoadingPlansService {
         create: { planId, ...validation.metrics },
         update: validation.metrics,
       });
+
+      await this.replaceAxleLoadSnapshots(tx, planId, truckId, axleLoadSnapshots);
 
       await tx.loadingPlan.update({ where: { id: planId }, data: { status: PlanStatus.MODIFIED } });
       await this.audit.recordWithClient(tx, {
@@ -370,7 +426,147 @@ export class LoadingPlansService {
       return tx.loadingPlan.findUniqueOrThrow({ where: { id: planId }, include: loadingPlanInclude });
     });
 
-    return this.toDto(updatedPlan);
+    return this.toDto(updatedPlan, undefined, undefined, await this.loadPlanDomain(planId));
+  }
+
+  async placeUnplacedItem(planId: string, unplacedItemId: string, dto: PlaceUnplacedItemDto, actor?: string) {
+    const plan = await this.prisma.loadingPlan.findUnique({
+      where: { id: planId },
+      include: {
+        operation: { include: { truck: { include: { zones: true } } } },
+        placedItems: { include: { product: true, truckZone: true } },
+        unplaced: { include: { product: true } },
+      },
+    });
+
+    if (!plan) {
+      throw new NotFoundException('Loading plan not found.');
+    }
+
+    if (plan.status === PlanStatus.APPROVED) {
+      throw new BadRequestException('Approved loading plans cannot be modified.');
+    }
+
+    const unplacedItem = plan.unplaced.find((item) => item.id === unplacedItemId);
+    if (!unplacedItem) {
+      throw new NotFoundException('Unplaced item not found in this loading plan.');
+    }
+
+    if (dto.rotationDeg % 90 !== 0) {
+      throw new BadRequestException('rotationDeg must be a 90 degree increment.');
+    }
+    if (dto.rotationDeg % 180 !== 0 && unplacedItem.product.rotationAllowed === false) {
+      throw new BadRequestException('Product does not allow rotation.');
+    }
+
+    const placedItemId = randomUUID();
+    const orientedDimensions = this.orientedDimensions(unplacedItem.product, dto.rotationDeg, unplacedItem.product);
+    const newItem = {
+      id: placedItemId,
+      planId,
+      productId: unplacedItem.productId,
+      unitIndex: unplacedItem.unitIndex,
+      truckZoneId: null,
+      loadingLayerId: null,
+      xMm: dto.xMm,
+      yMm: dto.yMm,
+      zMm: dto.zMm,
+      rotationDeg: dto.rotationDeg,
+      lengthMm: orientedDimensions.lengthMm,
+      widthMm: orientedDimensions.widthMm,
+      heightMm: orientedDimensions.heightMm,
+      locked: dto.locked ?? false,
+      manuallyAdjusted: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      product: unplacedItem.product,
+      truckZone: null,
+    };
+    const adjustedItems = [...plan.placedItems, newItem];
+    const validationPlan = { ...plan, unplaced: plan.unplaced.filter((item) => item.id !== unplacedItemId) };
+    const truckZoneId = this.zoneForItem(plan, newItem);
+    const validation = this.recalculatePlan(validationPlan, adjustedItems);
+    const truckId = plan.operation.truck!.id;
+    const loadingLayerRows = await this.loadTruckLoadingLayerRows(this.prisma, truckId);
+    const layeredItems = applyLoadingLayersToPlacedItems(adjustedItems, loadingLayerRows);
+    const loadingLayerId = layeredItems.find((item) => item.id === placedItemId)?.loadingLayerId ?? null;
+    const axleGroups = await this.loadTruckAxleGroups(truckId);
+    const axleLoadSnapshots = calculateAxleLoadSnapshots(
+      axleGroups.map((group) => ({
+        code: group.code,
+        label: group.label,
+        startXMm: group.startXMm,
+        endXMm: group.endXMm,
+        maxWeightKg: decimalToNumber(group.maxWeightKg) ?? 0,
+        source: group.source ?? undefined,
+        notes: group.notes ?? undefined,
+      })),
+      adjustedItems.map((item) => ({
+        xMm: item.xMm,
+        lengthMm: item.lengthMm ?? 0,
+        weightKg: decimalToNumber(item.product.weightKg) ?? 0,
+      })),
+    );
+
+    const updatedPlan = await this.prisma.$transaction(async (tx) => {
+      await tx.placedItem.create({
+        data: {
+          id: placedItemId,
+          planId,
+          productId: unplacedItem.productId,
+          unitIndex: unplacedItem.unitIndex,
+          truckZoneId,
+          xMm: newItem.xMm,
+          yMm: newItem.yMm,
+          zMm: newItem.zMm,
+          rotationDeg: newItem.rotationDeg,
+          lengthMm: newItem.lengthMm,
+          widthMm: newItem.widthMm,
+          heightMm: newItem.heightMm,
+          locked: newItem.locked,
+          manuallyAdjusted: true,
+        },
+      });
+      await tx.$executeRaw`UPDATE "PlacedItem" SET "loadingLayerId" = ${loadingLayerId}, "updatedAt" = NOW() WHERE "id" = ${placedItemId}`;
+      await tx.unplacedItem.delete({ where: { id: unplacedItemId } });
+
+      await tx.loadAlert.deleteMany({ where: { planId } });
+      if (validation.alerts.length > 0) {
+        await tx.loadAlert.createMany({ data: validation.alerts.map((alert) => ({ ...alert, planId })) });
+      }
+
+      await tx.planMetrics.upsert({
+        where: { planId },
+        create: { planId, ...validation.metrics },
+        update: validation.metrics,
+      });
+
+      await this.replaceAxleLoadSnapshots(tx, planId, truckId, axleLoadSnapshots);
+      await tx.loadingPlan.update({ where: { id: planId }, data: { status: PlanStatus.MODIFIED } });
+      await this.audit.recordWithClient(tx, {
+        actor,
+        source: AuditSource.API,
+        action: AuditAction.MANUAL_ADJUSTED,
+        entityType: 'UnplacedItem',
+        entityId: unplacedItemId,
+        relatedEntityType: 'LoadingPlan',
+        relatedEntityId: planId,
+        before: { reason: unplacedItem.reason, message: unplacedItem.message },
+        after: {
+          placedItemId,
+          xMm: newItem.xMm,
+          yMm: newItem.yMm,
+          zMm: newItem.zMm,
+          rotationDeg: newItem.rotationDeg,
+          truckZoneId,
+          planStatus: PlanStatus.MODIFIED,
+        },
+      });
+
+      return tx.loadingPlan.findUniqueOrThrow({ where: { id: planId }, include: loadingPlanInclude });
+    });
+
+    return this.toDto(updatedPlan, undefined, undefined, await this.loadPlanDomain(planId));
   }
 
   private toPlannerInput(operation: Prisma.LoadOperationGetPayload<{
@@ -661,7 +857,147 @@ export class LoadingPlansService {
     }, 0);
   }
 
-  private toDto(plan: LoadingPlanWithRelations, candidateDiagnostics?: LoadingPlannerResult['candidateDiagnostics'], candidateProducts?: Prisma.LoadProductGetPayload<{ include: { destination: true } }>[]) {
+  private async loadTruckLoadingLayers(truckId: string) {
+    const rows = await this.loadTruckLoadingLayerRows(this.prisma, truckId);
+
+    return rows.map((row) => ({
+      number: row.number,
+      label: row.label,
+      groupLabel: row.groupLabel,
+      minZMm: row.minZMm,
+      maxZMm: row.maxZMm,
+    }));
+  }
+
+  private async loadTruckLoadingLayerRows(client: PrismaService | Prisma.TransactionClient, truckId: string) {
+    return client.$queryRaw<LoadingLayerRow[]>`
+      SELECT "id", "number", "label", "groupLabel", "minZMm", "maxZMm", "notes"
+      FROM "LoadingLayer"
+      WHERE "truckId" = ${truckId}
+      ORDER BY "number" ASC
+    `;
+  }
+
+  private async loadTruckAxleGroups(truckId: string) {
+    return this.prisma.$queryRaw<AxleGroupRow[]>`
+      SELECT "id", "code", "label", "startXMm", "endXMm", "maxWeightKg", "source", "notes"
+      FROM "AxleGroup"
+      WHERE "truckId" = ${truckId}
+      ORDER BY "startXMm" ASC
+    `;
+  }
+
+  private async ensureLoadingLayers(tx: Prisma.TransactionClient, truckId: string, layers: LoadingPlannerResult['loadingLayers']) {
+    const existing = await tx.$queryRaw<Pick<LoadingLayerRow, 'id' | 'number'>[]>`
+      SELECT "id", "number"
+      FROM "LoadingLayer"
+      WHERE "truckId" = ${truckId}
+    `;
+    const idByNumber = new Map(existing.map((layer) => [layer.number, layer.id]));
+
+    for (const layer of layers) {
+      if (idByNumber.has(layer.number)) continue;
+      const id = randomUUID();
+      await tx.$executeRaw`
+        INSERT INTO "LoadingLayer" ("id", "truckId", "number", "label", "groupLabel", "minZMm", "maxZMm", "createdAt", "updatedAt")
+        VALUES (${id}, ${truckId}, ${layer.number}, ${layer.label}, ${layer.groupLabel}, ${layer.minZMm}, ${layer.maxZMm}, NOW(), NOW())
+      `;
+      idByNumber.set(layer.number, id);
+    }
+
+    return idByNumber;
+  }
+
+  private async createAxleLoadSnapshots(tx: Prisma.TransactionClient, planId: string, truckId: string, snapshots: LoadingPlannerResult['axleLoadSnapshots']) {
+    if (snapshots.length === 0) return;
+
+    const axleGroups = await tx.$queryRaw<Pick<AxleGroupRow, 'id' | 'code'>[]>`
+      SELECT "id", "code"
+      FROM "AxleGroup"
+      WHERE "truckId" = ${truckId}
+    `;
+    const axleGroupIdByCode = new Map(axleGroups.map((group) => [group.code, group.id]));
+
+    for (const snapshot of snapshots) {
+      await tx.$executeRaw`
+        INSERT INTO "AxleLoadSnapshot" (
+          "id", "planId", "axleGroupId", "axleGroupCode", "axleGroupLabel", "startXMm", "endXMm",
+          "maxWeightKg", "computedWeightKg", "status", "source", "notes", "createdAt", "updatedAt"
+        ) VALUES (
+          ${randomUUID()}, ${planId}, ${axleGroupIdByCode.get(snapshot.axleGroupCode) ?? null}, ${snapshot.axleGroupCode}, ${snapshot.axleGroupLabel},
+          ${snapshot.startXMm}, ${snapshot.endXMm}, ${snapshot.maxWeightKg}, ${snapshot.computedWeightKg}, ${snapshot.status}::"AxleLoadStatus",
+          ${snapshot.source ?? null}, ${snapshot.notes ?? null}, NOW(), NOW()
+        )
+      `;
+    }
+  }
+
+  private async replaceAxleLoadSnapshots(tx: Prisma.TransactionClient, planId: string, truckId: string, snapshots: LoadingPlannerResult['axleLoadSnapshots']) {
+    await tx.$executeRaw`DELETE FROM "AxleLoadSnapshot" WHERE "planId" = ${planId}`;
+    await this.createAxleLoadSnapshots(tx, planId, truckId, snapshots);
+  }
+
+  private async loadPlanDomain(planId: string): Promise<PlanDomain> {
+    const layers = await this.prisma.$queryRaw<LoadingLayerRow[]>`
+      SELECT ll."id", ll."number", ll."label", ll."groupLabel", ll."minZMm", ll."maxZMm", ll."notes"
+      FROM "LoadingLayer" ll
+      JOIN "Truck" t ON t."id" = ll."truckId"
+      JOIN "LoadingPlan" lp ON lp."operationId" = t."operationId"
+      WHERE lp."id" = ${planId}
+      ORDER BY ll."number" ASC
+    `;
+    const snapshots = await this.prisma.$queryRaw<AxleLoadSnapshotRow[]>`
+      SELECT "axleGroupCode", "axleGroupLabel", "source", "notes", "startXMm", "endXMm", "maxWeightKg", "computedWeightKg", "status"
+      FROM "AxleLoadSnapshot"
+      WHERE "planId" = ${planId}
+      ORDER BY "startXMm" ASC
+    `;
+    const placedItemLayers = await this.prisma.$queryRaw<PlacedItemLayerRow[]>`
+      SELECT pi."id" AS "placedItemId", ll."number", ll."label", ll."groupLabel"
+      FROM "PlacedItem" pi
+      JOIN "LoadingLayer" ll ON ll."id" = pi."loadingLayerId"
+      WHERE pi."planId" = ${planId}
+      ORDER BY pi."createdAt" ASC
+    `;
+
+    return {
+      loadingLayers: layers.map((layer) => ({
+        number: layer.number,
+        label: layer.label,
+        groupLabel: layer.groupLabel,
+        minZMm: layer.minZMm,
+        maxZMm: layer.maxZMm,
+      })),
+      axleLoadSnapshots: snapshots.map((snapshot) => ({
+        axleGroupCode: snapshot.axleGroupCode,
+        axleGroupLabel: snapshot.axleGroupLabel,
+        source: snapshot.source ?? undefined,
+        notes: snapshot.notes ?? undefined,
+        startXMm: snapshot.startXMm,
+        endXMm: snapshot.endXMm,
+        maxWeightKg: decimalToNumber(snapshot.maxWeightKg) ?? 0,
+        computedWeightKg: decimalToNumber(snapshot.computedWeightKg) ?? 0,
+        status: snapshot.status,
+      })),
+      placedItemLayers,
+    };
+  }
+
+  private toDto(
+    plan: LoadingPlanWithRelations,
+    candidateDiagnostics?: LoadingPlannerResult['candidateDiagnostics'],
+    candidateProducts?: Prisma.LoadProductGetPayload<{ include: { destination: true } }>[],
+    domain?: PlanDomain,
+  ) {
+    const generatedLayerByUnit = new Map<string, LoadingPlannerResult['placedItems'][number]>();
+    const persistedLayerByPlacedItemId = new Map((domain?.placedItemLayers ?? []).map((layer) => [layer.placedItemId, layer]));
+    if (domain) {
+      for (const candidate of [candidateDiagnostics?.bestPartialCandidate, ...(candidateDiagnostics?.candidates ?? [])]) {
+        if (!candidate) continue;
+        if (candidate.index !== candidateDiagnostics?.winnerIndex) continue;
+        for (const item of candidate.placedItems) generatedLayerByUnit.set(this.unitKey(item.productId, item.unitIndex), item);
+      }
+    }
     return {
       id: plan.id,
       operationId: plan.operationId,
@@ -684,6 +1020,9 @@ export class LoadingPlansService {
         destinationName: item.product.destination?.name,
         truckZoneId: item.truckZoneId,
         zoneType: item.truckZone?.type,
+        layerNumber: generatedLayerByUnit.get(this.unitKey(item.productId, item.unitIndex))?.layerNumber ?? persistedLayerByPlacedItemId.get(item.id)?.number,
+        layerLabel: generatedLayerByUnit.get(this.unitKey(item.productId, item.unitIndex))?.layerLabel ?? persistedLayerByPlacedItemId.get(item.id)?.label,
+        layerGroupLabel: generatedLayerByUnit.get(this.unitKey(item.productId, item.unitIndex))?.layerGroupLabel ?? persistedLayerByPlacedItemId.get(item.id)?.groupLabel,
         xMm: item.xMm,
         yMm: item.yMm,
         zMm: item.zMm,
@@ -710,6 +1049,8 @@ export class LoadingPlansService {
       alerts: plan.alerts.map((alert) => ({
         id: alert.id,
         productId: alert.productId,
+        productCode: alert.product?.code,
+        productName: alert.product?.description ?? alert.product?.code,
         placedItemId: alert.placedItemId,
         severity: alert.severity,
         type: alert.type,
@@ -740,6 +1081,8 @@ export class LoadingPlansService {
           }
         : null,
       evaluation: plan.metrics ? buildLoadingPlanEvaluationDto(plan.metrics, plan.alerts) : null,
+      loadingLayers: domain?.loadingLayers ?? [],
+      axleLoadSnapshots: domain?.axleLoadSnapshots ?? [],
       candidateDiagnostics: buildLoadingPlanCandidateDiagnosticsDto(this.toCandidateDiagnosticsDto(candidateDiagnostics, candidateProducts)),
       createdAt: plan.createdAt,
       updatedAt: plan.updatedAt,
@@ -754,69 +1097,77 @@ export class LoadingPlansService {
     if (!candidateDiagnostics) return undefined;
 
     const productById = new Map(products.map((product) => [product.id, product]));
+    const toCandidateDetailDto = (candidate: PlannerCandidateDetail) => ({
+      ...candidate,
+      placedItems: candidate.placedItems.map((item) => {
+        const product = productById.get(item.productId);
+        return {
+          id: candidatePlacedItemId(candidate.index, item.productId, item.unitIndex),
+          productId: item.productId,
+          unitIndex: item.unitIndex,
+          productCode: product?.code ?? item.productId,
+          productName: product?.description ?? product?.code ?? item.productId,
+          productFamily: product?.family,
+          destinationId: product?.destinationId,
+          destinationName: product?.destination?.name,
+          truckZoneId: item.truckZoneId,
+          zoneType: item.zoneType,
+          layerNumber: item.layerNumber,
+          layerLabel: item.layerLabel,
+          layerGroupLabel: item.layerGroupLabel,
+          xMm: item.xMm,
+          yMm: item.yMm,
+          zMm: item.zMm,
+          rotationDeg: item.rotationDeg,
+          lengthMm: item.lengthMm,
+          widthMm: item.widthMm,
+          heightMm: item.heightMm,
+          locked: false,
+          manuallyAdjusted: false,
+        };
+      }),
+      unplacedItems: candidate.unplacedItems.map((item) => {
+        const product = productById.get(item.productId);
+        return {
+          id: `candidate-${candidate.index}-unplaced-${item.productId}-${item.unitIndex}`,
+          productId: item.productId,
+          unitIndex: item.unitIndex,
+          productCode: product?.code ?? item.productId,
+          productName: product?.description ?? product?.code ?? item.productId,
+          productFamily: product?.family,
+          destinationId: product?.destinationId,
+          destinationName: product?.destination?.name,
+          reason: item.reason,
+          message: item.message,
+        };
+      }),
+      steps: candidate.steps.map((step) => ({
+        id: `candidate-${candidate.index}-step-${step.sequence}`,
+        planId: `candidate-${candidate.index}`,
+        placedItemId: candidatePlacedItemId(candidate.index, step.productId, step.unitIndex),
+        sequence: step.sequence,
+        title: step.title,
+        instructions: step.instructions,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      })),
+      alerts: candidate.alerts.map((alert, alertIndex) => ({
+        id: `candidate-${candidate.index}-alert-${alertIndex}`,
+        productId: alert.productId,
+        productCode: alert.productId ? productById.get(alert.productId)?.code : undefined,
+        productName: alert.productId ? (productById.get(alert.productId)?.description ?? productById.get(alert.productId)?.code) : undefined,
+        severity: alert.severity,
+        type: alert.type,
+        message: alert.message,
+        createdAt: new Date(0),
+      })),
+      axleLoadSnapshots: candidate.axleLoadSnapshots,
+    });
 
     return {
       ...candidateDiagnostics,
-      candidates: candidateDiagnostics.candidates.map((candidate) => ({
-        ...candidate,
-        placedItems: candidate.placedItems.map((item) => {
-          const product = productById.get(item.productId);
-          return {
-            id: candidatePlacedItemId(candidate.index, item.productId, item.unitIndex),
-            productId: item.productId,
-            unitIndex: item.unitIndex,
-            productCode: product?.code ?? item.productId,
-            productName: product?.description ?? product?.code ?? item.productId,
-            productFamily: product?.family,
-            destinationId: product?.destinationId,
-            destinationName: product?.destination?.name,
-            truckZoneId: item.truckZoneId,
-            zoneType: item.zoneType,
-            xMm: item.xMm,
-            yMm: item.yMm,
-            zMm: item.zMm,
-            rotationDeg: item.rotationDeg,
-            lengthMm: item.lengthMm,
-            widthMm: item.widthMm,
-            heightMm: item.heightMm,
-            locked: false,
-            manuallyAdjusted: false,
-          };
-        }),
-        unplacedItems: candidate.unplacedItems.map((item) => {
-          const product = productById.get(item.productId);
-          return {
-            id: `candidate-${candidate.index}-unplaced-${item.productId}-${item.unitIndex}`,
-            productId: item.productId,
-            unitIndex: item.unitIndex,
-            productCode: product?.code ?? item.productId,
-            productName: product?.description ?? product?.code ?? item.productId,
-            productFamily: product?.family,
-            destinationId: product?.destinationId,
-            destinationName: product?.destination?.name,
-            reason: item.reason,
-            message: item.message,
-          };
-        }),
-        steps: candidate.steps.map((step) => ({
-          id: `candidate-${candidate.index}-step-${step.sequence}`,
-          planId: `candidate-${candidate.index}`,
-          placedItemId: candidatePlacedItemId(candidate.index, step.productId, step.unitIndex),
-          sequence: step.sequence,
-          title: step.title,
-          instructions: step.instructions,
-          createdAt: new Date(0),
-          updatedAt: new Date(0),
-        })),
-        alerts: candidate.alerts.map((alert, alertIndex) => ({
-          id: `candidate-${candidate.index}-alert-${alertIndex}`,
-          productId: alert.productId,
-          severity: alert.severity,
-          type: alert.type,
-          message: alert.message,
-          createdAt: new Date(0),
-        })),
-      })),
+      candidates: candidateDiagnostics.candidates.map(toCandidateDetailDto),
+      bestPartialCandidate: candidateDiagnostics.bestPartialCandidate ? toCandidateDetailDto(candidateDiagnostics.bestPartialCandidate) : undefined,
     };
   }
 

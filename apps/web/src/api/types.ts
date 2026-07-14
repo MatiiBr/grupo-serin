@@ -408,6 +408,12 @@ export interface LoadingPlanEvaluation {
   penalties: LoadingPlanEvaluationPenalty[];
 }
 
+export interface LoadingPlanCandidateExplanation {
+  summary: string;
+  strengths: string[];
+  tradeoffs: string[];
+}
+
 export interface LoadingPlanCandidateSummary {
   index: number;
   name: string;
@@ -415,6 +421,7 @@ export interface LoadingPlanCandidateSummary {
   hardViolationCount: number;
   placedItemCount: number;
   unplacedItemCount: number;
+  explanation: LoadingPlanCandidateExplanation;
 }
 
 export interface LoadingPlanCandidateDetail extends LoadingPlanCandidateSummary {
@@ -424,12 +431,20 @@ export interface LoadingPlanCandidateDetail extends LoadingPlanCandidateSummary 
   alerts: PlanAlert[];
   metrics: PlanMetrics;
   evaluation: LoadingPlanEvaluation;
+  axleLoadSnapshots?: AxleLoadSnapshot[];
+}
+
+export interface LoadingPlanDiscardedCandidateSummary extends LoadingPlanCandidateSummary {
+  reason: string;
 }
 
 export interface LoadingPlanCandidateDiagnostics {
   winnerIndex: number;
   winnerName: string;
+  winnerExplanation: LoadingPlanCandidateExplanation;
   candidates: LoadingPlanCandidateDetail[];
+  bestPartialCandidate?: LoadingPlanCandidateDetail;
+  discardedCandidates?: LoadingPlanDiscardedCandidateSummary[];
 }
 
 export interface PlanAlert {
@@ -438,6 +453,8 @@ export interface PlanAlert {
   type: string;
   message: string;
   productId?: string | null;
+  productCode?: string | null;
+  productName?: string | null;
   placedItemId?: string | null;
   createdAt: string;
 }
@@ -451,6 +468,9 @@ export interface PlacedItem {
   productFamily: ProductFamily;
   destinationName?: string;
   zoneType?: TruckZoneType;
+  layerNumber?: number;
+  layerLabel?: string;
+  layerGroupLabel?: string;
   xMm: number;
   yMm: number;
   zMm: number;
@@ -462,11 +482,39 @@ export interface PlacedItem {
   manuallyAdjusted: boolean;
 }
 
+export interface LoadingLayer {
+  number: number;
+  label: string;
+  groupLabel: string;
+  minZMm: number;
+  maxZMm: number;
+}
+
+export interface AxleLoadSnapshot {
+  axleGroupCode: string;
+  axleGroupLabel: string;
+  source?: string;
+  notes?: string;
+  startXMm: number;
+  endXMm: number;
+  maxWeightKg: number;
+  computedWeightKg: number;
+  status: 'OK' | 'EXCEEDED' | 'UNKNOWN';
+}
+
 export interface AdjustPlacedItemPayload {
   xMm?: number;
   yMm?: number;
   zMm?: number;
   rotationDeg?: number;
+  locked?: boolean;
+}
+
+export interface PlaceUnplacedItemPayload {
+  xMm: number;
+  yMm: number;
+  zMm: number;
+  rotationDeg: number;
   locked?: boolean;
 }
 
@@ -508,6 +556,8 @@ export interface LoadingPlan {
   alerts: PlanAlert[];
   metrics: PlanMetrics | null;
   evaluation?: LoadingPlanEvaluation | null;
+  loadingLayers?: LoadingLayer[];
+  axleLoadSnapshots?: AxleLoadSnapshot[];
   candidateDiagnostics?: LoadingPlanCandidateDiagnostics;
   createdAt: string;
   updatedAt: string;
