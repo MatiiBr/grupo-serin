@@ -1,4 +1,4 @@
-import { LoadingMethod, ProductFamily, TruckZoneType, UnplacedReason } from '@prisma/client';
+import { AlertSeverity, AlertType, LoadingMethod, ProductFamily, TruckZoneType, UnplacedReason } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { HeuristicLoadingPlanner } from './heuristic-loading-planner';
 import type {
@@ -423,5 +423,46 @@ describe('1b.15 — perf: the bounded heuristic search stays tractable at realis
     expect(result.placedItems.length + result.unplacedItems.length).toBe(240);
     expect(result.placedItems.length).toBeGreaterThan(0);
     expect(durationMs).toBeLessThan(5000);
+  });
+});
+
+describe('0.2 — tier heights must not exceed truck height (domain guard, no TruckTier CRUD)', () => {
+  it('emits a CRITICAL HEIGHT_EXCEEDED alert when the configured tier stack sums past truck.heightMm', () => {
+    const configuredTiers: PlannerTruckTierInput[] = [
+      { id: 'tier-1', level: 1, maxHeightMm: 900 },
+      { id: 'tier-2', level: 2, maxHeightMm: 900 },
+      { id: 'tier-3', level: 3, maxHeightMm: 900 },
+    ];
+
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({ truck: { heightMm: 2400, tiers: configuredTiers } }),
+    );
+
+    expect(result.alerts).toContainEqual(
+      expect.objectContaining({
+        severity: AlertSeverity.CRITICAL,
+        type: AlertType.HEIGHT_EXCEEDED,
+      }),
+    );
+  });
+
+  it('does not emit HEIGHT_EXCEEDED when the configured tier stack fits within truck.heightMm', () => {
+    const configuredTiers: PlannerTruckTierInput[] = [
+      { id: 'tier-1', level: 1, maxHeightMm: 800 },
+      { id: 'tier-2', level: 2, maxHeightMm: 800 },
+      { id: 'tier-3', level: 3, maxHeightMm: 800 },
+    ];
+
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({ truck: { heightMm: 2400, tiers: configuredTiers } }),
+    );
+
+    expect(result.alerts).not.toContainEqual(expect.objectContaining({ type: AlertType.HEIGHT_EXCEEDED }));
+  });
+
+  it('does not emit HEIGHT_EXCEEDED for a truck with no explicitly configured tiers (synthesized defaults)', () => {
+    const result = new HeuristicLoadingPlanner().generate(createInput({ truck: { heightMm: 2400, tiers: [] } }));
+
+    expect(result.alerts).not.toContainEqual(expect.objectContaining({ type: AlertType.HEIGHT_EXCEEDED }));
   });
 });

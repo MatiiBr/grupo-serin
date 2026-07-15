@@ -1,6 +1,6 @@
 import { AlertSeverity, AlertType, TruckZoneType, UnplacedReason } from '@prisma/client';
 import { Bounds, Box, isWithinBounds, isWithinHeight, overlaps3D, Rect, supports, topZ } from './geometry';
-import { buildTiers } from './tiers';
+import { buildTiers, tierHeightsExceedTruck } from './tiers';
 import {
   LoadingPlannerInput,
   LoadingPlannerResult,
@@ -473,6 +473,14 @@ export class HeuristicLoadingPlanner {
       type: AlertType.UNPLACED_ITEM,
       message: `Product ${item.productId} unit ${item.unitIndex} was not placed: ${item.message}`,
     }));
+    if (tierHeightsExceedTruck(input.truck.tiers, input.truck.heightMm ?? 0)) {
+      alerts.push({
+        severity: AlertSeverity.CRITICAL,
+        type: AlertType.HEIGHT_EXCEEDED,
+        message: `Configured tier stack exceeds truck height ${(input.truck.heightMm ?? 0).toFixed(0)}mm.`,
+      });
+    }
+
     const totalWeightKg = this.totalInputWeight(input.products);
 
     if (input.truck.maxPayloadKg !== undefined && totalWeightKg > input.truck.maxPayloadKg) {

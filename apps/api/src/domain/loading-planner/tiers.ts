@@ -21,3 +21,24 @@ export function buildTiers(tiers: PlannerTruckTierInput[], truckHeightMm: number
     maxWeightKg: undefined,
   }));
 }
+
+/**
+ * Validates an EXPLICITLY configured tier stack against the truck's overall
+ * height: the summed `maxHeightMm` of all configured tiers must not exceed
+ * `truck.heightMm`.
+ *
+ * Deliberately only evaluates tiers the caller has actually configured
+ * (`input.truck.tiers`, pre-`buildTiers`). Synthesized default tiers (see
+ * `buildTiers`) each get the FULL truck height as their own cap — a single
+ * tier may legitimately use the whole height — so summing synthesized tiers
+ * would always "exceed" truck height and must never be treated as a
+ * misconfiguration.
+ */
+export function tierHeightsExceedTruck(configuredTiers: PlannerTruckTierInput[], truckHeightMm: number): boolean {
+  if (configuredTiers.length === 0 || truckHeightMm <= 0) {
+    return false;
+  }
+
+  const summedHeightMm = configuredTiers.reduce((sum, tier) => sum + (tier.maxHeightMm ?? 0), 0);
+  return summedHeightMm > truckHeightMm;
+}

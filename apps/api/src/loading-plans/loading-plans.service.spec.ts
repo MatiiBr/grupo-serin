@@ -1,8 +1,10 @@
-import { AlertSeverity, AlertType, TruckZoneType } from '@prisma/client';
-import { describe, expect, it } from 'vitest';
+import { AlertSeverity, AlertType, LoadingMethod, OperationStatus, PlanStatus, ProductFamily, TruckZoneType } from '@prisma/client';
+import { describe, expect, it, vi } from 'vitest';
+import { AuditService } from '../audit/audit.service';
 import { overlaps3D } from '../domain/loading-planner/geometry';
 import { HeuristicLoadingPlanner } from '../domain/loading-planner/heuristic-loading-planner';
 import type { LoadingPlannerInput, PlannerProductInput, PlannerTruckZoneInput } from '../domain/loading-planner/loading-planner.types';
+import { PrismaService } from '../prisma/prisma.service';
 import { LoadingPlansService } from './loading-plans.service';
 
 /**
@@ -281,5 +283,224 @@ describe('LoadingPlansService.recalculatePlan — overlap rule parity with the g
     const divergent = validation.alerts.filter((alert: { type: AlertType }) => divergentTypes.includes(alert.type));
 
     expect(divergent).toHaveLength(0);
+  });
+});
+
+/**
+ * WARNING 3, part 1 (verify-report) — "Pre-migration single-floor plan
+ * remains valid" was structurally satisfied by the `tier Int @default(1)`
+ * migration column but never exercised by a test simulating an actual
+ * pre-existing row (created before the tier model existed) flowing through
+ * validation. Existing backward-compat coverage only proved NEW plans
+ * generate tier:1/zMm:0 — this proves an OLD row (tier:1, zMm:0, on a truck
+ * with no configured TruckTier rows — the exact shape a migrated legacy
+ * truck/placement has) still passes `recalculatePlan` without tripping any
+ * of the new tier-aware checks (HEIGHT_EXCEEDED, MAX_WEIGHT_EXCEEDED,
+ * STACKING_RISK, OVERLAP, OUT_OF_BOUNDS).
+ */
+describe('LoadingPlansService.recalculatePlan — pre-migration single-floor placement remains valid (WARNING 3)', () => {
+  it('does not raise any bounds/weight/stacking alert for a legacy tier:1, zMm:0 placement on a truck with no configured tiers', () => {
+    const service = createService();
+    // `createTruck()`'s default already has `tiers: []` — exactly what a
+    // truck created before the TruckTier table existed has (no backfill,
+    // per design: "no tier data migration is needed").
+    const truck = createTruck();
+    const plan = createPlan({ truck });
+    const legacyItem = createPlacedItem({
+      id: 'legacy-1',
+      xMm: 0,
+      yMm: 0,
+      zMm: 0,
+      tier: 1,
+      lengthMm: 500,
+      widthMm: 500,
+      heightMm: 500,
+      product: { code: 'P-1', weightKg: 500, fragile: false },
+    });
+
+    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, [legacyItem]);
+
+    const blockingTypes: AlertType[] = [
+      AlertType.OVERLAP,
+      AlertType.OUT_OF_BOUNDS,
+      AlertType.HEIGHT_EXCEEDED,
+      AlertType.MAX_WEIGHT_EXCEEDED,
+      AlertType.STACKING_RISK,
+    ];
+    const blocking = validation.alerts.filter((alert: { type: AlertType }) => blockingTypes.includes(alert.type));
+    expect(blocking).toHaveLength(0);
+  });
+});
+
+/**
+ * WARNING 2 (verify-report) — the generated `tier` was never exercised on
+ * the actual DB write path (`tx.placedItem.create` in `generate()`,
+ * loading-plans.service.ts ~line 118). These specs mock `$transaction`
+ * (same convention as `dispatch.service.spec.ts` /
+ * `catalog-stabilization.spec.ts`) and assert the persisted `data.tier`
+ * matches what the planner computed — not just what the in-memory result
+ * object carries.
+ */
+describe('LoadingPlansService.generate — persists the planner-computed tier (WARNING 2)', () => {
+  function createOperation(
+    overrides: {
+      truck?: Partial<{
+        lengthMm: number;
+        widthMm: number;
+        heightMm: number;
+        zones: Array<{ id: string; type: TruckZoneType; maxWeightKg: number | null; startXMm: number; endXMm: number; startYMm: number; endYMm: number }>;
+        tiers: Array<{ id: string; level: number; maxHeightMm?: number | null; maxWeightKg?: number | null }>;
+      }>;
+    } = {},
+  ) {
+    return {
+      id: 'operation-1',
+      truck: {
+        id: 'truck-1',
+        loadingMethod: LoadingMethod.REAR,
+        maxPayloadKg: null,
+        lengthMm: 2000,
+        widthMm: 1000,
+        heightMm: 2000,
+        zones: [{ id: 'zone-center', type: TruckZoneType.CENTER, maxWeightKg: null, startXMm: 0, endXMm: 2000, startYMm: 0, endYMm: 1000 }],
+        tiers: [],
+        ...overrides.truck,
+      },
+      destinations: [{ id: 'destination-1', name: 'First stop', unloadingOrder: 1 }],
+      products: [
+        {
+          id: 'product-1',
+          code: 'P-1',
+          family: ProductFamily.GENERIC_PACKAGE,
+          description: null,
+          destinationId: 'destination-1',
+          quantity: 2,
+          weightKg: 100,
+          lengthMm: 500,
+          widthMm: 500,
+          heightMm: 500,
+          stackable: true,
+          rotationAllowed: false,
+          fragile: false,
+          maxStackLoadKg: null,
+          destination: { id: 'destination-1', name: 'First stop', unloadingOrder: 1 },
+        },
+      ],
+      plans: [],
+    };
+  }
+
+  function createServiceWithMockedTransaction(operation = createOperation()) {
+    const transactionClient = {
+      loadingPlan: {
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi.fn().mockResolvedValue({ id: 'plan-1' }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({
+          id: 'plan-1',
+          operation: { code: 'OP-1', status: OperationStatus.PLAN_GENERATED },
+          placedItems: [],
+          unplaced: [],
+          steps: [],
+          alerts: [],
+          metrics: null,
+        }),
+      },
+      placedItem: { create: vi.fn().mockResolvedValue({ id: 'placed-1' }) },
+      unplacedItem: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      loadingStep: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      loadAlert: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      planMetrics: { create: vi.fn().mockResolvedValue({}) },
+      loadOperation: { update: vi.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      loadOperation: { findUnique: vi.fn().mockResolvedValue(operation) },
+      $transaction: vi.fn((callback: (tx: typeof transactionClient) => unknown) => callback(transactionClient)),
+    };
+    const audit = { record: vi.fn(), recordWithClient: vi.fn() };
+    const service = new LoadingPlansService(prisma as unknown as PrismaService, audit as unknown as AuditService);
+
+    return { prisma, service, transactionClient };
+  }
+
+  it('writes PlacedItem.tier equal to the tier the solver computed for each unit', async () => {
+    // Truck floor exactly matches one unit's footprint (500x500), so the
+    // second unit CANNOT fit beside the first on the floor and must stack
+    // at tier 2 — this forces a real, non-degenerate multi-tier result.
+    const operation = createOperation({
+      truck: {
+        lengthMm: 500,
+        widthMm: 500,
+        heightMm: 1200,
+        zones: [{ id: 'zone-center', type: TruckZoneType.CENTER, maxWeightKg: null, startXMm: 0, endXMm: 500, startYMm: 0, endYMm: 500 }],
+      },
+    });
+    const { service, transactionClient } = createServiceWithMockedTransaction(operation);
+
+    // Derive the expected result via the SAME production mapping
+    // (`toPlannerInput`) the service itself uses internally, so this
+    // fixture cannot silently drift from what `service.generate()` feeds
+    // the solver.
+    const plannerInput = (service as never as { toPlannerInput: (op: unknown) => LoadingPlannerInput }).toPlannerInput(operation);
+    const expected = new HeuristicLoadingPlanner().generate(plannerInput);
+
+    // Sanity: this fixture must force real stacking (tier > 1 for at least
+    // one unit), otherwise the assertion below can't distinguish "tier was
+    // persisted correctly" from "tier was always 1 by coincidence".
+    expect(expected.placedItems.some((item) => item.tier > 1)).toBe(true);
+
+    await service.generate('operation-1');
+
+    expect(transactionClient.placedItem.create).toHaveBeenCalledTimes(expected.placedItems.length);
+    for (const item of expected.placedItems) {
+      expect(transactionClient.placedItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: item.productId,
+            unitIndex: item.unitIndex,
+            tier: item.tier,
+            zMm: item.zMm,
+          }),
+        }),
+      );
+    }
+  });
+
+  it('writes PlacedItem.tier 1 for a single-floor plan that never needs to stack (backward-compat, WARNING 3)', async () => {
+    const { service, transactionClient } = createServiceWithMockedTransaction();
+
+    await service.generate('operation-1');
+
+    expect(transactionClient.placedItem.create).toHaveBeenCalled();
+    for (const call of transactionClient.placedItem.create.mock.calls) {
+      expect(call[0].data.tier).toBe(1);
+      expect(call[0].data.zMm).toBe(0);
+    }
+  });
+
+  it('honors both maxHeightMm and maxWeightKg on a fully configured TruckTier, end-to-end through the persist path (WARNING 3, full tier wiring)', async () => {
+    // tier 1's maxWeightKg (150) is the actual blocking constraint: two
+    // 100kg units would sum to 200kg, over cap, even though the truck floor
+    // (2000x1000mm) has ample XY room for both 500x500 footprints side by
+    // side. tier 1's maxHeightMm (1000) is generous — never the blocker.
+    // If `maxWeightKg` were silently dropped between `operation.truck.tiers`
+    // and the solver, the cap would never fire and the second unit would
+    // stay on the empty floor (tier 1, z=0) instead of stacking — the
+    // solver always prefers the lowest available z. This assertion fails
+    // in that case, proving the field is genuinely read end-to-end.
+    const operation = createOperation({
+      truck: {
+        tiers: [
+          { id: 'tier-1', level: 1, maxHeightMm: 1000, maxWeightKg: 150 },
+          { id: 'tier-2', level: 2, maxHeightMm: 1000, maxWeightKg: 500 },
+        ],
+      },
+    });
+    const { service, transactionClient } = createServiceWithMockedTransaction(operation);
+
+    await service.generate('operation-1');
+
+    expect(transactionClient.placedItem.create).toHaveBeenCalledTimes(2);
+    const tiers = transactionClient.placedItem.create.mock.calls.map((call) => call[0].data.tier).sort();
+    expect(tiers).toEqual([1, 2]);
   });
 });
