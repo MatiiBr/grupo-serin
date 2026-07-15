@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AlertSeverity, AlertType, AuditAction, AuditSource, OperationStatus, PlanStatus, Prisma, TruckZoneType } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { HeuristicLoadingPlanner } from '../domain/loading-planner/heuristic-loading-planner';
-import { Bounds, Box, isWithinBounds, isWithinHeight, overlaps3D } from '../domain/loading-planner/geometry';
+import { Bounds, Box, isWithinBounds, isWithinHeight, overlaps3D, supports } from '../domain/loading-planner/geometry';
 import { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loading-planner/loading-planner.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
@@ -41,7 +41,7 @@ type ReportPlanWithRelations = Prisma.LoadingPlanGetPayload<{ include: typeof re
 type Decimalish = Prisma.Decimal | number | string | null | undefined;
 type RecalculationPlan = Prisma.LoadingPlanGetPayload<{
   include: {
-    operation: { include: { truck: { include: { zones: true } } } };
+    operation: { include: { truck: { include: { zones: true; tiers: true } } } };
     placedItems: { include: { product: true; truckZone: true } };
     unplaced: { include: { product: true } };
   };
@@ -266,7 +266,7 @@ export class LoadingPlansService {
     const plan = await this.prisma.loadingPlan.findUnique({
       where: { id: planId },
       include: {
-        operation: { include: { truck: { include: { zones: true } } } },
+        operation: { include: { truck: { include: { zones: true, tiers: true } } } },
         placedItems: { include: { product: true, truckZone: true } },
         unplaced: { include: { product: true } },
       },
@@ -525,12 +525,15 @@ export class LoadingPlansService {
     }));
 
     const truckBounds: Bounds = { startXMm: 0, endXMm: truck.lengthMm, startYMm: 0, endYMm: truck.widthMm };
+    const itemBoxes = new Map<string, Box>();
     for (const item of placedItems) {
       const lengthMm = item.lengthMm ?? 0;
       const widthMm = item.widthMm ?? 0;
       const heightMm = item.heightMm ?? 0;
       const itemBox: Box = { xMm: item.xMm, yMm: item.yMm, lengthMm, widthMm, zMm: item.zMm, heightMm };
-      if (!isWithinBounds(itemBox, truckBounds) || !isWithinHeight(itemBox, truck.heightMm)) {
+      itemBoxes.set(item.id, itemBox);
+
+      if (!isWithinBounds(itemBox, truckBounds)) {
         alerts.push({
           productId: item.productId,
           placedItemId: item.id,
@@ -539,14 +542,23 @@ export class LoadingPlansService {
           message: `Product ${item.product.code} unit ${item.unitIndex} is outside truck bounds.`,
         });
       }
+      if (!isWithinHeight(itemBox, truck.heightMm)) {
+        alerts.push({
+          productId: item.productId,
+          placedItemId: item.id,
+          severity: AlertSeverity.CRITICAL,
+          type: AlertType.HEIGHT_EXCEEDED,
+          message: `Product ${item.product.code} unit ${item.unitIndex} exceeds truck height.`,
+        });
+      }
     }
 
     for (let index = 0; index < placedItems.length; index += 1) {
       for (let otherIndex = index + 1; otherIndex < placedItems.length; otherIndex += 1) {
         const item = placedItems[index];
         const other = placedItems[otherIndex];
-        const itemBox: Box = { xMm: item.xMm, yMm: item.yMm, lengthMm: item.lengthMm ?? 0, widthMm: item.widthMm ?? 0, zMm: item.zMm, heightMm: item.heightMm ?? 0 };
-        const otherBox: Box = { xMm: other.xMm, yMm: other.yMm, lengthMm: other.lengthMm ?? 0, widthMm: other.widthMm ?? 0, zMm: other.zMm, heightMm: other.heightMm ?? 0 };
+        const itemBox = itemBoxes.get(item.id)!;
+        const otherBox = itemBoxes.get(other.id)!;
         if (overlaps3D(itemBox, otherBox)) {
           alerts.push({
             productId: item.productId,
@@ -563,6 +575,22 @@ export class LoadingPlansService {
             message: `Product ${other.product.code} unit ${other.unitIndex} overlaps ${item.product.code} unit ${item.unitIndex}.`,
           });
         }
+      }
+    }
+
+    for (const item of placedItems) {
+      const itemBox = itemBoxes.get(item.id)!;
+      const fragileBase = placedItems.find(
+        (other) => other.id !== item.id && other.product.fragile && supports(itemBox, itemBoxes.get(other.id)!),
+      );
+      if (fragileBase) {
+        alerts.push({
+          productId: item.productId,
+          placedItemId: item.id,
+          severity: AlertSeverity.WARNING,
+          type: AlertType.STACKING_RISK,
+          message: `Product ${item.product.code} unit ${item.unitIndex} rests on fragile product ${fragileBase.product.code} unit ${fragileBase.unitIndex}.`,
+        });
       }
     }
 
@@ -601,6 +629,38 @@ export class LoadingPlansService {
       },
       { cabin: 0, center: 0, door: 0 },
     );
+
+    for (const tierConfig of truck.tiers) {
+      if (tierConfig.maxWeightKg === null) continue;
+      const tierWeightKg = placedItems
+        .filter((item) => item.tier === tierConfig.level)
+        .reduce((sum, item) => sum + (decimalToNumber(item.product.weightKg) ?? 0), 0);
+      if (tierWeightKg > Number(tierConfig.maxWeightKg)) {
+        alerts.push({
+          severity: AlertSeverity.CRITICAL,
+          type: AlertType.MAX_WEIGHT_EXCEEDED,
+          message: `Tier ${tierConfig.level} load ${tierWeightKg.toFixed(3)}kg exceeds cap ${Number(tierConfig.maxWeightKg).toFixed(3)}kg.`,
+        });
+      }
+    }
+
+    const zoneWeightByType: Record<TruckZoneType, number> = {
+      [TruckZoneType.CABIN_SIDE]: zoneWeights.cabin,
+      [TruckZoneType.CENTER]: zoneWeights.center,
+      [TruckZoneType.DOOR_SIDE]: zoneWeights.door,
+    };
+    for (const zone of truck.zones) {
+      if (zone.maxWeightKg === null) continue;
+      const zoneWeightKg = zoneWeightByType[zone.type];
+      if (zoneWeightKg > Number(zone.maxWeightKg)) {
+        alerts.push({
+          severity: AlertSeverity.CRITICAL,
+          type: AlertType.MAX_WEIGHT_EXCEEDED,
+          message: `Zone ${zone.type} load ${zoneWeightKg.toFixed(3)}kg exceeds cap ${Number(zone.maxWeightKg).toFixed(3)}kg.`,
+        });
+      }
+    }
+
     const usedVolumeM3 = placedItems.reduce(
       (sum, item) => sum + ((item.lengthMm ?? 0) * (item.widthMm ?? 0) * (item.heightMm ?? 0)) / 1_000_000_000,
       0,
