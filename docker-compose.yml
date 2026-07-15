@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: camiones
     ports:
-      - "55432:5432"
+      - "55433:5432"
     volumes:
       - camiones-postgres-data:/var/lib/postgresql/data
     healthcheck:
