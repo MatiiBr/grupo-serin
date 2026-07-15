@@ -17,6 +17,13 @@ export interface PlannerTruckZoneInput {
   maxWeightKg?: number;
 }
 
+export interface PlannerTruckTierInput {
+  id?: string;
+  level: number;
+  maxHeightMm?: number;
+  maxWeightKg?: number;
+}
+
 export interface PlannerTruckInput {
   id: string;
   loadingMethod: LoadingMethodValue;
@@ -25,6 +32,7 @@ export interface PlannerTruckInput {
   widthMm?: number;
   heightMm?: number;
   zones: PlannerTruckZoneInput[];
+  tiers: PlannerTruckTierInput[];
 }
 
 export interface PlannerDestinationInput {
@@ -46,6 +54,8 @@ export interface PlannerProductInput {
   heightMm?: number;
   stackable: boolean;
   rotationAllowed: boolean;
+  fragile: boolean;
+  maxStackLoadKg?: number;
 }
 
 export interface LoadingPlannerInput {
@@ -62,6 +72,7 @@ export interface PlannerPlacedItem {
   xMm: number;
   yMm: number;
   zMm: number;
+  tier: number;
   rotationDeg: number;
   lengthMm: number;
   widthMm: number;

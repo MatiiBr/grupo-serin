@@ -25,6 +25,7 @@ function createInput(
       widthMm: 2000,
       heightMm: 2500,
       zones: fullWidthZones,
+      tiers: [],
       ...overrides.truck,
     },
     destinations: overrides.destinations ?? [{ id: 'destination-1', name: 'First stop', unloadingOrder: 1 }],
@@ -45,6 +46,7 @@ function createProduct(overrides: Partial<PlannerProductInput> = {}): PlannerPro
     heightMm: 400,
     stackable: false,
     rotationAllowed: true,
+    fragile: false,
     ...overrides,
   };
 }
@@ -104,6 +106,28 @@ describe('HeuristicLoadingPlanner', () => {
       expect.arrayContaining([
         expect.objectContaining({ productId: 'cabin-product', zoneType: TruckZoneType.CABIN_SIDE }),
         expect.objectContaining({ productId: 'door-product', zoneType: TruckZoneType.DOOR_SIDE }),
+      ]),
+    );
+  });
+
+  it('assigns tier 1 to every placement when the load fits on the floor without stacking (backward-compat)', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({ products: [createProduct({ id: 'legacy-product' })] }),
+    );
+
+    expect(result.placedItems).toEqual([expect.objectContaining({ productId: 'legacy-product', tier: 1, zMm: 0 })]);
+  });
+
+  it('keeps every unit of a multi-unit product on tier 1 when they all fit side by side on the floor', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({ products: [createProduct({ id: 'multi-unit-product', quantity: 2 })] }),
+    );
+
+    expect(result.placedItems).toHaveLength(2);
+    expect(result.placedItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ productId: 'multi-unit-product', unitIndex: 1, tier: 1, zMm: 0 }),
+        expect.objectContaining({ productId: 'multi-unit-product', unitIndex: 2, tier: 1, zMm: 0 }),
       ]),
     );
   });

@@ -146,6 +146,7 @@ export class HeuristicLoadingPlanner {
           xMm: placement.xMm,
           yMm: placement.yMm,
           zMm: 0,
+          tier: 1,
           rotationDeg: orientation.rotationDeg,
           lengthMm: orientation.lengthMm,
           widthMm: orientation.widthMm,

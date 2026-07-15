@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AlertSeverity, AlertType, AuditAction, AuditSource, OperationStatus, PlanStatus, Prisma, TruckZoneType } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { HeuristicLoadingPlanner } from '../domain/loading-planner/heuristic-loading-planner';
-import { Bounds, isWithinBounds, overlaps } from '../domain/loading-planner/geometry';
+import { Bounds, Box, isWithinBounds, isWithinHeight, overlaps3D } from '../domain/loading-planner/geometry';
 import { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loading-planner/loading-planner.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
@@ -62,7 +62,7 @@ export class LoadingPlansService {
     const operation = await this.prisma.loadOperation.findUnique({
       where: { id: operationId },
       include: {
-        truck: { include: { zones: true } },
+        truck: { include: { zones: true, tiers: true } },
         destinations: { orderBy: { unloadingOrder: 'asc' } },
         products: { include: { destination: true }, orderBy: { createdAt: 'asc' } },
         plans: { orderBy: { version: 'desc' }, take: 1, select: { version: true } },
@@ -115,6 +115,7 @@ export class LoadingPlansService {
             xMm: item.xMm,
             yMm: item.yMm,
             zMm: item.zMm,
+            tier: item.tier,
             rotationDeg: item.rotationDeg,
             lengthMm: item.lengthMm,
             widthMm: item.widthMm,
@@ -374,7 +375,7 @@ export class LoadingPlansService {
 
   private toPlannerInput(operation: Prisma.LoadOperationGetPayload<{
     include: {
-      truck: { include: { zones: true } };
+      truck: { include: { zones: true; tiers: true } };
       destinations: true;
       products: { include: { destination: true } };
       plans: { select: { version: true } };
@@ -397,6 +398,12 @@ export class LoadingPlansService {
           startYMm: zone.startYMm ?? undefined,
           endYMm: zone.endYMm ?? undefined,
         })),
+        tiers: operation.truck!.tiers.map((tier) => ({
+          id: tier.id,
+          level: tier.level,
+          maxHeightMm: tier.maxHeightMm ?? undefined,
+          maxWeightKg: decimalToNumber(tier.maxWeightKg),
+        })),
       },
       destinations: operation.destinations.map((destination) => ({
         id: destination.id,
@@ -416,6 +423,8 @@ export class LoadingPlansService {
         heightMm: product.heightMm ?? undefined,
         stackable: product.stackable,
         rotationAllowed: product.rotationAllowed,
+        fragile: product.fragile,
+        maxStackLoadKg: decimalToNumber(product.maxStackLoadKg),
       })),
     };
   }
@@ -520,7 +529,8 @@ export class LoadingPlansService {
       const lengthMm = item.lengthMm ?? 0;
       const widthMm = item.widthMm ?? 0;
       const heightMm = item.heightMm ?? 0;
-      if (!isWithinBounds({ xMm: item.xMm, yMm: item.yMm, lengthMm, widthMm }, truckBounds) || item.zMm + heightMm > truck.heightMm) {
+      const itemBox: Box = { xMm: item.xMm, yMm: item.yMm, lengthMm, widthMm, zMm: item.zMm, heightMm };
+      if (!isWithinBounds(itemBox, truckBounds) || !isWithinHeight(itemBox, truck.heightMm)) {
         alerts.push({
           productId: item.productId,
           placedItemId: item.id,
@@ -535,12 +545,9 @@ export class LoadingPlansService {
       for (let otherIndex = index + 1; otherIndex < placedItems.length; otherIndex += 1) {
         const item = placedItems[index];
         const other = placedItems[otherIndex];
-        const xyOverlap = overlaps(
-          { xMm: item.xMm, yMm: item.yMm, lengthMm: item.lengthMm ?? 0, widthMm: item.widthMm ?? 0 },
-          { xMm: other.xMm, yMm: other.yMm, lengthMm: other.lengthMm ?? 0, widthMm: other.widthMm ?? 0 },
-        );
-        const zOverlap = item.zMm < other.zMm + (other.heightMm ?? 0) && other.zMm < item.zMm + (item.heightMm ?? 0);
-        if (xyOverlap && zOverlap) {
+        const itemBox: Box = { xMm: item.xMm, yMm: item.yMm, lengthMm: item.lengthMm ?? 0, widthMm: item.widthMm ?? 0, zMm: item.zMm, heightMm: item.heightMm ?? 0 };
+        const otherBox: Box = { xMm: other.xMm, yMm: other.yMm, lengthMm: other.lengthMm ?? 0, widthMm: other.widthMm ?? 0, zMm: other.zMm, heightMm: other.heightMm ?? 0 };
+        if (overlaps3D(itemBox, otherBox)) {
           alerts.push({
             productId: item.productId,
             placedItemId: item.id,

@@ -657,8 +657,24 @@ model Truck {
 
   operation LoadOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
   zones     TruckZone[]
+  tiers     TruckTier[]
 
   @@index([plate])
+}
+
+model TruckTier {
+  id          String   @id @default(uuid())
+  truckId     String
+  level       Int
+  maxHeightMm Int?
+  maxWeightKg Decimal? @db.Decimal(12, 3)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  truck Truck @relation(fields: [truckId], references: [id], onDelete: Cascade)
+
+  @@unique([truckId, level])
+  @@index([truckId])
 }
 
 model TruckZone {
@@ -713,6 +729,8 @@ model LoadProduct {
   heightMm        Int?
   stackable       Boolean       @default(false)
   rotationAllowed Boolean       @default(true)
+  fragile         Boolean       @default(false)
+  maxStackLoadKg  Decimal?      @db.Decimal(12, 3)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -760,6 +778,7 @@ model PlacedItem {
   xMm         Int
   yMm         Int
   zMm         Int      @default(0)
+  tier        Int      @default(1)
   rotationDeg Int      @default(0)
   lengthMm    Int?
   widthMm     Int?
