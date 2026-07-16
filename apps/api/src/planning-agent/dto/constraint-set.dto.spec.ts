@@ -22,18 +22,19 @@ function validConstraintSet() {
       { type: 'ZONE_RESTRICTION', productCode: 'P-3', zone: 'DOOR_SIDE' },
       { type: 'TIER_RESTRICTION', productCode: 'P-4', maxTier: 2 },
       { type: 'FAMILY_PLACEMENT_BAN', family: 'COIL', zone: 'CABIN_SIDE' },
+      { type: 'PRODUCT_ZONE_BAN', productCode: 'P-6', zone: 'CABIN_SIDE' },
     ],
     notes: 'From rulesText',
   };
 }
 
 describe('ConstraintSetDto — structural validation gate (loading-agent-llm 2.1/2.2)', () => {
-  it('validates a ConstraintSet containing one rule of each of the 5 hard-rule types with zero errors', async () => {
+  it('validates a ConstraintSet containing one rule of each of the 6 hard-rule types with zero errors', async () => {
     const instance = plainToInstance(ConstraintSetDto, validConstraintSet());
     const errors = await validate(instance);
 
     expect(errors).toEqual([]);
-    expect(instance.hardRules).toHaveLength(5);
+    expect(instance.hardRules).toHaveLength(6);
   });
 
   it('validates a ConstraintSet with empty hardRules (no rules extracted) with zero errors', async () => {
@@ -62,6 +63,27 @@ describe('ConstraintSetDto — structural validation gate (loading-agent-llm 2.1
     const errors = await validate(instance);
 
     expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('validates a PRODUCT_ZONE_BAN rule (bans a product FROM a zone) with zero errors', async () => {
+    const instance = plainToInstance(ConstraintSetDto, {
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-6', zone: 'CABIN_SIDE' }],
+    });
+    const errors = await validate(instance);
+
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects a PRODUCT_ZONE_BAN rule missing its required "zone" field', async () => {
+    const instance = plainToInstance(ConstraintSetDto, {
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-6' }],
+    });
+    const errors = await validate(instance);
+
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe('hardRules');
   });
 
   it('rejects a rule with an unknown "type" discriminator', async () => {

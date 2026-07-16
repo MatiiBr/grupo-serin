@@ -55,18 +55,29 @@ function applyProductRule(product: PlannerProductInput, rule: Exclude<HardRule, 
       product.fragile = true;
       return;
     case 'ZONE_RESTRICTION':
+      // Confines the product TO this zone (opposite of PRODUCT_ZONE_BAN).
       product.allowedZones = intersectZones(product.allowedZones, [toZoneValue(rule.zone)]);
       return;
     case 'TIER_RESTRICTION':
       // Most-restrictive-wins: the lower maxTier caps.
       product.maxTier = product.maxTier !== undefined ? Math.min(product.maxTier, rule.maxTier) : rule.maxTier;
       return;
+    case 'PRODUCT_ZONE_BAN':
+      // Bans the product FROM this zone (opposite of ZONE_RESTRICTION) — it
+      // may go anywhere else. Same allZones-minus-zone mechanism as
+      // applyFamilyBan, scoped to a single product instead of a family.
+      product.allowedZones = intersectZones(product.allowedZones, zonesExcluding(rule.zone));
+      return;
   }
 }
 
-function applyFamilyBan(products: PlannerProductInput[], family: SharedProductFamily, bannedZone: SharedTruckZoneType): void {
+function zonesExcluding(bannedZone: SharedTruckZoneType): TruckZoneTypeValue[] {
   const banned = toZoneValue(bannedZone);
-  const remaining = ALL_ZONE_TYPES.filter((zone) => zone !== banned);
+  return ALL_ZONE_TYPES.filter((zone) => zone !== banned);
+}
+
+function applyFamilyBan(products: PlannerProductInput[], family: SharedProductFamily, bannedZone: SharedTruckZoneType): void {
+  const remaining = zonesExcluding(bannedZone);
   const targetFamily = toFamilyValue(family);
 
   for (const product of products) {

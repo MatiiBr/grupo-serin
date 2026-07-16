@@ -259,6 +259,68 @@ describe('applyConstraints — FAMILY_PLACEMENT_BAN', () => {
   });
 });
 
+describe('applyConstraints — PRODUCT_ZONE_BAN', () => {
+  it('sets allowedZones to allZones minus the banned zone (bans FROM a zone, not confines TO it)', () => {
+    const input = createInput({ products: [createProduct({ code: 'P-1' })] });
+    const rules: ConstraintSet = {
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-1', zone: SharedTruckZoneType.CABIN_SIDE }],
+    };
+
+    const result = applyConstraints(input, rules);
+
+    expect(result.products[0].allowedZones).toEqual(expect.arrayContaining([TruckZoneType.CENTER, TruckZoneType.DOOR_SIDE]));
+    expect(result.products[0].allowedZones).not.toContain(TruckZoneType.CABIN_SIDE);
+  });
+
+  it('regression: the solver never places the banned product in the banned zone, even when it is the only zone that fits geometrically', () => {
+    const input = createInput({
+      destinations: [{ id: 'destination-1', name: 'Only stop', unloadingOrder: 1 }],
+      products: [createProduct({ id: 'profile-1', code: 'PROFILE-1', lengthMm: 500, widthMm: 500, heightMm: 400 })],
+      truck: {
+        zones: [
+          { id: 'zone-center', type: TruckZoneType.CENTER, startXMm: 0, endXMm: 100, startYMm: 0, endYMm: 2000 },
+          { id: 'zone-door', type: TruckZoneType.DOOR_SIDE, startXMm: 100, endXMm: 200, startYMm: 0, endYMm: 2000 },
+          // The only zone large enough is the banned one (CABIN_SIDE).
+          { id: 'zone-cabin', type: TruckZoneType.CABIN_SIDE, startXMm: 200, endXMm: 9000, startYMm: 0, endYMm: 2000 },
+        ],
+      },
+    });
+    const rules: ConstraintSet = {
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'PROFILE-1', zone: SharedTruckZoneType.CABIN_SIDE }],
+    };
+
+    const result = new HeuristicLoadingPlanner().generate(applyConstraints(input, rules));
+
+    expect(result.placedItems).toHaveLength(0);
+    expect(result.unplacedItems).toEqual([expect.objectContaining({ productId: 'profile-1' })]);
+  });
+
+  it('conflict resolution: a ZONE_RESTRICTION and a PRODUCT_ZONE_BAN naming the SAME zone for the same product intersect to empty (most-restrictive-wins) instead of throwing', () => {
+    // Directly contradictory: "must go ONLY in CENTER" + "must NOT go in CENTER".
+    // A weaker test (different zones) would pass even if PRODUCT_ZONE_BAN were
+    // a no-op, since ZONE_RESTRICTION alone already narrows to one zone that
+    // wouldn't be excluded by a differently-zoned ban — this same-zone case is
+    // the only one where the empty result can ONLY come from PRODUCT_ZONE_BAN
+    // actually being applied.
+    const input = createInput({ products: [createProduct({ code: 'P-1' })] });
+    const rules: ConstraintSet = {
+      version: 1,
+      hardRules: [
+        { type: 'ZONE_RESTRICTION', productCode: 'P-1', zone: SharedTruckZoneType.CENTER },
+        { type: 'PRODUCT_ZONE_BAN', productCode: 'P-1', zone: SharedTruckZoneType.CENTER },
+      ],
+    };
+
+    expect(() => applyConstraints(input, rules)).not.toThrow();
+    const result = applyConstraints(input, rules);
+
+    // ZONE_RESTRICTION -> [CENTER]; PRODUCT_ZONE_BAN -> allZones\CENTER = [CABIN_SIDE, DOOR_SIDE]; intersection = [].
+    expect(result.products[0].allowedZones).toEqual([]);
+  });
+});
+
 describe('applyConstraints — conflicting rule resolution (most-restrictive-wins)', () => {
   it('intersects a ZONE_RESTRICTION with an overlapping FAMILY_PLACEMENT_BAN instead of throwing', () => {
     const input = createInput({

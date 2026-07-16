@@ -83,6 +83,30 @@ describe('DeepSeekJsonAdapter.planConstraints — golden path', () => {
     expect(content).toMatch(/"hardRules"\s*:\s*\[/);
     expect(content).toContain('"zone"');
   });
+
+  it('documents PRODUCT_ZONE_BAN as the ban-FROM-a-zone rule, distinct from ZONE_RESTRICTION\'s confine-TO-a-zone semantics (regression: a live call for "los perfiles NO pueden ir en la cabina" produced ZONE_RESTRICTION zone=CABIN_SIDE — the opposite of what was asked)', async () => {
+    const client = mockClient(JSON.stringify({ version: 1, hardRules: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await adapter.planConstraints({ rulesText: 'Any rule.', catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    const content: string = systemMessage.content;
+
+    // The exact field shape is spelled out alongside the other five rule types.
+    expect(content).toContain('PRODUCT_ZONE_BAN{type,productCode,zone}');
+
+    // The disambiguation must be explicit: which rule to pick for "cannot/must
+    // not go in zone Z" (ban) vs "must go in/only in zone Z" (confine).
+    expect(content).toMatch(/cannot|must not/i);
+    expect(content).toMatch(/PRODUCT_ZONE_BAN/);
+    expect(content).toMatch(/must go in|only in/i);
+    expect(content).toMatch(/ZONE_RESTRICTION/);
+
+    // A PRODUCT_ZONE_BAN example is present in the JSON example block.
+    expect(content).toContain('"PRODUCT_ZONE_BAN"');
+  });
 });
 
 describe('DeepSeekJsonAdapter.planConstraints — invalid responses (typed errors, no crash)', () => {

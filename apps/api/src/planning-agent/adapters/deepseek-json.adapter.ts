@@ -48,9 +48,14 @@ const SYSTEM_PROMPT_HEADER = [
   '  ZONE_RESTRICTION{type,productCode,zone}',
   '  TIER_RESTRICTION{type,productCode,maxTier}',
   '  FAMILY_PLACEMENT_BAN{type,family,zone}',
-  'Field meanings: "type" is the rule discriminator (one of the five names above); "productCode" is a single product code; "family" is a product family; "zone" is a truck zone; "maxTier" is a positive integer (max stacking tier, 1 = ground tier).',
-  'Example — "No stacking on P-100 and P-200 must stay in DOOR_SIDE":',
-  '{ "version": 1, "hardRules": [ { "type": "STACKING_PROHIBITION", "productCode": "P-100" }, { "type": "ZONE_RESTRICTION", "productCode": "P-200", "zone": "DOOR_SIDE" } ] }',
+  '  PRODUCT_ZONE_BAN{type,productCode,zone}',
+  'Field meanings: "type" is the rule discriminator (one of the six names above); "productCode" is a single product code; "family" is a product family; "zone" is a truck zone; "maxTier" is a positive integer (max stacking tier, 1 = ground tier).',
+  'CRITICAL — do not confuse these two zone rules, they are OPPOSITES:',
+  '  ZONE_RESTRICTION means the product may ONLY go in "zone" — it CONFINES the product TO that zone. Use it when the instruction says the product must go in / must stay in / only in a specific zone.',
+  '  PRODUCT_ZONE_BAN means the product must NOT go in "zone" — it BANS the product FROM that zone; the product may go anywhere else. Use it when the instruction says the product cannot / must not / cannot go in / is forbidden from a specific zone.',
+  '  Rule of thumb: "X cannot/must not go in zone Z" -> PRODUCT_ZONE_BAN{productCode:X, zone:Z}. "X must go in / only in zone Z" -> ZONE_RESTRICTION{productCode:X, zone:Z}.',
+  'Example — "No stacking on P-100, P-200 must stay in DOOR_SIDE, and P-300 cannot go in CABIN_SIDE":',
+  '{ "version": 1, "hardRules": [ { "type": "STACKING_PROHIBITION", "productCode": "P-100" }, { "type": "ZONE_RESTRICTION", "productCode": "P-200", "zone": "DOOR_SIDE" }, { "type": "PRODUCT_ZONE_BAN", "productCode": "P-300", "zone": "CABIN_SIDE" } ] }',
   'Every "productCode" and "family" you reference MUST come from the catalog below — never invent one.',
 ].join('\n');
 

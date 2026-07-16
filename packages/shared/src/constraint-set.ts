@@ -16,6 +16,7 @@ export const HARD_RULE_TYPES = [
   'ZONE_RESTRICTION',
   'TIER_RESTRICTION',
   'FAMILY_PLACEMENT_BAN',
+  'PRODUCT_ZONE_BAN',
 ] as const;
 
 export type HardRuleType = (typeof HARD_RULE_TYPES)[number];
@@ -48,7 +49,27 @@ export interface FamilyPlacementBanRule {
   zone: TruckZoneType;
 }
 
-export type HardRule = StackingProhibitionRule | FragileOnTopRule | ZoneRestrictionRule | TierRestrictionRule | FamilyPlacementBanRule;
+/**
+ * Bans a single product FROM a zone (the product may go anywhere else).
+ * Mirrors `FamilyPlacementBanRule` but scoped to `productCode` instead of
+ * `family`. Distinct from `ZoneRestrictionRule`, which CONFINES a product TO
+ * a zone — the two are semantic opposites and must not be conflated (see
+ * `SYSTEM_PROMPT_HEADER` in `deepseek-json.adapter.ts` for the disambiguation
+ * given to the LLM).
+ */
+export interface ProductZoneBanRule {
+  type: 'PRODUCT_ZONE_BAN';
+  productCode: string;
+  zone: TruckZoneType;
+}
+
+export type HardRule =
+  | StackingProhibitionRule
+  | FragileOnTopRule
+  | ZoneRestrictionRule
+  | TierRestrictionRule
+  | FamilyPlacementBanRule
+  | ProductZoneBanRule;
 
 export interface ConstraintSet {
   version: 1;

@@ -61,7 +61,24 @@ export class FamilyPlacementBanRuleDto {
   zone!: TruckZoneType;
 }
 
-export type HardRuleDto = StackingProhibitionRuleDto | FragileOnTopRuleDto | ZoneRestrictionRuleDto | TierRestrictionRuleDto | FamilyPlacementBanRuleDto;
+export class ProductZoneBanRuleDto {
+  @IsIn(['PRODUCT_ZONE_BAN'])
+  type!: 'PRODUCT_ZONE_BAN';
+
+  @IsString()
+  productCode!: string;
+
+  @IsIn(Object.values(TruckZoneType))
+  zone!: TruckZoneType;
+}
+
+export type HardRuleDto =
+  | StackingProhibitionRuleDto
+  | FragileOnTopRuleDto
+  | ZoneRestrictionRuleDto
+  | TierRestrictionRuleDto
+  | FamilyPlacementBanRuleDto
+  | ProductZoneBanRuleDto;
 
 export class ConstraintSetDto {
   @IsIn([1])
@@ -78,6 +95,7 @@ export class ConstraintSetDto {
         { value: ZoneRestrictionRuleDto, name: 'ZONE_RESTRICTION' },
         { value: TierRestrictionRuleDto, name: 'TIER_RESTRICTION' },
         { value: FamilyPlacementBanRuleDto, name: 'FAMILY_PLACEMENT_BAN' },
+        { value: ProductZoneBanRuleDto, name: 'PRODUCT_ZONE_BAN' },
       ],
     },
     keepDiscriminatorProperty: true,
