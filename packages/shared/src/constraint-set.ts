@@ -71,8 +71,49 @@ export type HardRule =
   | FamilyPlacementBanRule
   | ProductZoneBanRule;
 
+/**
+ * solver-soft-preferences — declarative, weighted soft-objective contract
+ * that RANKS candidates the solver already deemed hard-constraint-valid
+ * (see `apps/api/src/domain/loading-planner/candidate-scoring.ts`). Mirrors
+ * `HardRule`'s shape, but soft preferences never filter — only order —
+ * candidates, so they can neither admit an invalid placement nor drop an
+ * otherwise-placeable unit. Pure, framework-free (no class-validator here),
+ * same split as `HardRule`: the DTO that structurally validates a raw LLM
+ * response is deferred to the LLM-extraction follow-up change.
+ */
+
+export const SOFT_PREFERENCE_TYPES = ['LOW_CENTER_OF_GRAVITY', 'LATERAL_BALANCE', 'ZONE_AFFINITY', 'FRAGILE_UPPER_TIER'] as const;
+
+export type SoftPreferenceType = (typeof SOFT_PREFERENCE_TYPES)[number];
+
+export interface LowCenterOfGravityPreference {
+  type: 'LOW_CENTER_OF_GRAVITY';
+  weight: number;
+}
+
+export interface LateralBalancePreference {
+  type: 'LATERAL_BALANCE';
+  weight: number;
+}
+
+export interface ZoneAffinityPreference {
+  type: 'ZONE_AFFINITY';
+  productCode?: string;
+  family?: ProductFamily;
+  zone: TruckZoneType;
+  weight: number;
+}
+
+export interface FragileUpperTierPreference {
+  type: 'FRAGILE_UPPER_TIER';
+  weight: number;
+}
+
+export type SoftPreference = LowCenterOfGravityPreference | LateralBalancePreference | ZoneAffinityPreference | FragileUpperTierPreference;
+
 export interface ConstraintSet {
   version: 1;
   hardRules: HardRule[];
+  softPreferences?: SoftPreference[];
   notes?: string;
 }

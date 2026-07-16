@@ -106,5 +106,10 @@ export function applyConstraints(input: LoadingPlannerInput, constraintSet: Cons
     applyProductRule(product, rule);
   }
 
+  // solver-soft-preferences Phase 3 — read-only passthrough, NOT routed
+  // through applyProductRule: soft preferences RANK candidates, they never
+  // mutate a product's hard-constraint fields.
+  cloned.softPreferences = constraintSet.softPreferences;
+
   return cloned;
 }

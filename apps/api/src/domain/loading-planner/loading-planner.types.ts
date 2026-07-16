@@ -1,3 +1,4 @@
+import type { SoftPreference } from '@camiones/shared';
 import type { AlertSeverity, AlertType, LoadingMethod, ProductFamily, TruckZoneType, UnplacedReason } from '@prisma/client';
 
 export type LoadingMethodValue = `${LoadingMethod}`;
@@ -76,6 +77,13 @@ export interface LoadingPlannerInput {
   truck: PlannerTruckInput;
   destinations: PlannerDestinationInput[];
   products: PlannerProductInput[];
+  /**
+   * solver-soft-preferences Phase 3 — read-only passthrough of
+   * `ConstraintSet.softPreferences`, set by `applyConstraints`. `undefined`
+   * or `[]` = identity (matches current behavior; NOT yet consumed by
+   * `HeuristicLoadingPlanner` — see Phase 4).
+   */
+  softPreferences?: SoftPreference[];
 }
 
 export interface PlannerPlacedItem {

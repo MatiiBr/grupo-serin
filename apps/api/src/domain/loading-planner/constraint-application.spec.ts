@@ -366,3 +366,26 @@ describe('applyConstraints — regression: transformed input always yields a str
     expect(result!.alerts).toBeInstanceOf(Array);
   });
 });
+
+describe('applyConstraints — softPreferences passthrough (solver-soft-preferences Phase 3)', () => {
+  it('copies constraintSet.softPreferences onto the returned clone', () => {
+    const input = createInput();
+    const rules: ConstraintSet = {
+      version: 1,
+      hardRules: [],
+      softPreferences: [{ type: 'LATERAL_BALANCE', weight: 1 }],
+    };
+
+    const result = applyConstraints(input, rules);
+
+    expect(result.softPreferences).toEqual([{ type: 'LATERAL_BALANCE', weight: 1 }]);
+  });
+
+  it('leaves the clone.softPreferences undefined when the ConstraintSet has none (identity)', () => {
+    const input = createInput();
+
+    const result = applyConstraints(input, emptySet());
+
+    expect(result.softPreferences).toBeUndefined();
+  });
+});
