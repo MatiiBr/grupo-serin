@@ -76,7 +76,7 @@ export class DeepSeekJsonAdapter implements AgentPort {
     const messages: DeepSeekChatMessage[] = [
       {
         role: 'system',
-        content: 'You are a logistics assistant. Explain the loading plan in plain language for a warehouse operator, in 2-4 short paragraphs.',
+        content: 'Sos un asistente de logistica. Explicale el plan de carga a un operario de deposito en lenguaje claro y directo, en 2-4 parrafos cortos. Responde SIEMPRE en espanol.',
       },
       { role: 'user', content: JSON.stringify({ plan, appliedRules: constraints.hardRules }) },
     ];
