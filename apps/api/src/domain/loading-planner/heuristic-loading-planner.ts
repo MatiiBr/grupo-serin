@@ -1,4 +1,6 @@
+import type { SoftPreference } from '@camiones/shared';
 import { AlertSeverity, AlertType, TruckZoneType, UnplacedReason } from '@prisma/client';
+import { scoreZoneCandidate, type CandidateScoringContext } from './candidate-scoring';
 import { Bounds, Box, isWithinBounds, isWithinHeight, overlaps3D, Rect, supports, topZ } from './geometry';
 import { buildTiers, tierHeightsExceedTruck } from './tiers';
 import {
@@ -79,7 +81,7 @@ export class HeuristicLoadingPlanner {
     const unplacedItems: LoadingPlannerResult['unplacedItems'] = [];
 
     for (const unit of units) {
-      const outcome = this.placeUnit(unit, zones, tiers, placedItems, truckHeight, truckWidth);
+      const outcome = this.placeUnit(unit, zones, tiers, placedItems, truckHeight, truckWidth, input.softPreferences);
 
       if (outcome.item) {
         placedItems.push({ ...outcome.item, sequence: placedItems.length + 1 });
@@ -184,6 +186,7 @@ export class HeuristicLoadingPlanner {
     placedItems: Placed[],
     truckHeight: number,
     truckWidth: number,
+    softPreferences?: SoftPreference[],
   ): PlaceOutcome {
     if (!this.hasRequiredDimensions(unit)) return { blockedByStacking: false };
 
@@ -208,7 +211,7 @@ export class HeuristicLoadingPlanner {
 
     if (zoneCandidates.length === 0) return { blockedByStacking };
 
-    const chosen = this.chooseZoneCandidate(zoneCandidates, unit, placedItems, truckWidth);
+    const chosen = this.chooseZoneCandidate(zoneCandidates, unit, placedItems, truckWidth, softPreferences, truckHeight, tiers);
     return { item: this.toPlaced(unit, chosen), blockedByStacking: false };
   }
 
@@ -393,34 +396,107 @@ export class HeuristicLoadingPlanner {
   }
 
   /**
-   * Chooses among the best candidate found per zone. Defaults to zone
-   * priority order (target zone first). Soft rule 1b.13: if the priority
-   * zone's candidate would push lateral (left/right) weight imbalance over
-   * 20% and another zone's candidate would not, prefers the balanced one.
+   * Chooses among the best candidate found per zone.
+   *
+   * solver-soft-preferences Phase 4 — BYPASS is the default: when
+   * `softPreferences` is absent/empty, this runs the EXISTING hardcoded
+   * logic UNCHANGED (byte-identical to pre-Phase-4 behavior — see
+   * `heuristic-loading-planner.soft-preferences.spec.ts`'s identity test
+   * and the pinned 1b.13/1b.14/1b.15 fixtures, none of which pass
+   * `softPreferences`). Defaults to zone priority order (target zone
+   * first). Soft rule 1b.13: if the priority zone's candidate would push
+   * lateral (left/right) weight imbalance over 20% and another zone's
+   * candidate would not, prefers the balanced one.
+   *
+   * When `softPreferences` is non-empty, picks the argmax of
+   * `scoreZoneCandidate` across every candidate instead — soft preferences
+   * only RANK candidates that already passed every hard check upstream in
+   * `evaluateCandidate`/`placeUnit`; they can never admit an invalid
+   * candidate. On a score tie, the first (highest zone-priority) candidate
+   * wins, matching the bypass path's own tie-break stability.
    */
   private chooseZoneCandidate(
     zoneCandidates: Array<{ zone: ZoneCandidate; candidate: PlacementCandidate }>,
     unit: Unit,
     placedItems: Placed[],
     truckWidth: number,
+    softPreferences: SoftPreference[] | undefined,
+    truckHeight: number,
+    tiers: PlannerTruckTierInput[],
   ): PlacementCandidate {
-    if (zoneCandidates.length === 1 || truckWidth <= 0) return zoneCandidates[0].candidate;
+    if (zoneCandidates.length === 1) return zoneCandidates[0].candidate;
 
-    const weightKg = unit.weightKg ?? 0;
-    const imbalanceOf = (candidate: PlacementCandidate) => {
-      const centerY = truckWidth / 2;
-      const itemCenterY = candidate.yMm + candidate.orientation.widthMm / 2;
-      const left = this.sideWeight(placedItems, truckWidth, 'left') + (itemCenterY <= centerY ? weightKg : 0);
-      const right = this.sideWeight(placedItems, truckWidth, 'right') + (itemCenterY > centerY ? weightKg : 0);
-      const total = left + right;
-      return total > 0 ? Math.abs(left - right) / total : 0;
+    if (!softPreferences || softPreferences.length === 0) {
+      if (truckWidth <= 0) return zoneCandidates[0].candidate;
+
+      const weightKg = unit.weightKg ?? 0;
+      const imbalanceOf = (candidate: PlacementCandidate) => {
+        const centerY = truckWidth / 2;
+        const itemCenterY = candidate.yMm + candidate.orientation.widthMm / 2;
+        const left = this.sideWeight(placedItems, truckWidth, 'left') + (itemCenterY <= centerY ? weightKg : 0);
+        const right = this.sideWeight(placedItems, truckWidth, 'right') + (itemCenterY > centerY ? weightKg : 0);
+        const total = left + right;
+        return total > 0 ? Math.abs(left - right) / total : 0;
+      };
+
+      const priority = zoneCandidates[0];
+      if (imbalanceOf(priority.candidate) <= 0.2) return priority.candidate;
+
+      const balanced = zoneCandidates.find(({ candidate }) => imbalanceOf(candidate) <= 0.2);
+      return (balanced ?? priority).candidate;
+    }
+
+    const maxTier = tiers.length > 0 ? Math.max(...tiers.map((tier) => tier.level)) : 0;
+    const leftWeightKg = this.sideWeight(placedItems, truckWidth, 'left');
+    const rightWeightKg = this.sideWeight(placedItems, truckWidth, 'right');
+
+    let best = zoneCandidates[0];
+    let bestScore = scoreZoneCandidate(
+      this.buildScoringContext(best, unit, truckWidth, truckHeight, maxTier, leftWeightKg, rightWeightKg),
+      softPreferences,
+    );
+
+    for (const entry of zoneCandidates.slice(1)) {
+      const score = scoreZoneCandidate(
+        this.buildScoringContext(entry, unit, truckWidth, truckHeight, maxTier, leftWeightKg, rightWeightKg),
+        softPreferences,
+      );
+      if (score > bestScore) {
+        best = entry;
+        bestScore = score;
+      }
+    }
+
+    return best.candidate;
+  }
+
+  private buildScoringContext(
+    entry: { zone: ZoneCandidate; candidate: PlacementCandidate },
+    unit: Unit,
+    truckWidthMm: number,
+    maxZMm: number,
+    maxTier: number,
+    leftWeightKg: number,
+    rightWeightKg: number,
+  ): CandidateScoringContext {
+    return {
+      candidateZone: entry.zone.type,
+      candidateZMm: entry.candidate.zMm,
+      candidateTier: entry.candidate.tier,
+      candidateYMm: entry.candidate.yMm,
+      candidateWidthMm: entry.candidate.orientation.widthMm,
+      unit: {
+        code: unit.code,
+        family: unit.family,
+        fragile: unit.fragile,
+        weightKg: unit.weightKg ?? 0,
+      },
+      leftWeightKg,
+      rightWeightKg,
+      truckWidthMm,
+      maxZMm,
+      maxTier,
     };
-
-    const priority = zoneCandidates[0];
-    if (imbalanceOf(priority.candidate) <= 0.2) return priority.candidate;
-
-    const balanced = zoneCandidates.find(({ candidate }) => imbalanceOf(candidate) <= 0.2);
-    return (balanced ?? priority).candidate;
   }
 
   private toPlaced(unit: Unit, candidate: PlacementCandidate): Placed {
