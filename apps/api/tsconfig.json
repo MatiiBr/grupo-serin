@@ -9,8 +9,9 @@
     "allowSyntheticDefaultImports": true,
     "incremental": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": "../..",
+    "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src", "../../packages/shared/src"]
 }

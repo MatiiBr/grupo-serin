@@ -154,3 +154,114 @@ describe('HeuristicLoadingPlanner', () => {
     expect(withRotation.unplacedItems).toHaveLength(0);
   });
 });
+
+/**
+ * loading-agent-llm Phase 1 — additive `allowedZones`/`maxTier` fields on
+ * `PlannerProductInput`. Both are optional; undefined must behave exactly as
+ * before (identity), so the whole pre-existing suite above stays green
+ * unmodified. These specs cover the two NEW filters only.
+ */
+describe('HeuristicLoadingPlanner — allowedZones confinement (loading-agent-llm 1.1)', () => {
+  it('confines a product to its allowedZones even when its natural target zone differs', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({
+        destinations: [
+          { id: 'first-stop', name: 'First stop', unloadingOrder: 1 },
+          { id: 'last-stop', name: 'Last stop', unloadingOrder: 3 },
+        ],
+        // last-stop naturally targets CABIN_SIDE (see zone-targeting test above).
+        products: [createProduct({ id: 'confined-product', destinationId: 'last-stop', allowedZones: [TruckZoneType.DOOR_SIDE] })],
+      }),
+    );
+
+    expect(result.placedItems).toEqual([expect.objectContaining({ productId: 'confined-product', zoneType: TruckZoneType.DOOR_SIDE })]);
+  });
+
+  it('leaves an unrestricted product (allowedZones undefined) placed in its natural target zone (identity)', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({
+        destinations: [
+          { id: 'first-stop', name: 'First stop', unloadingOrder: 1 },
+          { id: 'last-stop', name: 'Last stop', unloadingOrder: 3 },
+        ],
+        products: [createProduct({ id: 'unrestricted-product', destinationId: 'last-stop' })],
+      }),
+    );
+
+    expect(result.placedItems).toEqual([expect.objectContaining({ productId: 'unrestricted-product', zoneType: TruckZoneType.CABIN_SIDE })]);
+  });
+
+  it('leaves a product unplaced when its only allowedZone is geometrically too small, ignoring the other (larger) zones', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      createInput({
+        products: [createProduct({ id: 'stranded-product', lengthMm: 500, widthMm: 500, heightMm: 400, allowedZones: [TruckZoneType.DOOR_SIDE] })],
+        truck: {
+          zones: [
+            { id: 'zone-cabin', type: TruckZoneType.CABIN_SIDE, startXMm: 0, endXMm: 3000, startYMm: 0, endYMm: 2000 },
+            { id: 'zone-center', type: TruckZoneType.CENTER, startXMm: 3000, endXMm: 6000, startYMm: 0, endYMm: 2000 },
+            // Too narrow (100mm) to fit a 500mm-long product — the only allowed zone is infeasible.
+            { id: 'zone-door', type: TruckZoneType.DOOR_SIDE, startXMm: 6000, endXMm: 6100, startYMm: 0, endYMm: 2000 },
+          ],
+        },
+      }),
+    );
+
+    expect(result.placedItems).toHaveLength(0);
+    expect(result.unplacedItems).toEqual([expect.objectContaining({ productId: 'stranded-product' })]);
+  });
+});
+
+describe('HeuristicLoadingPlanner — maxTier cap (loading-agent-llm 1.1)', () => {
+  const singleCenterZone: PlannerTruckZoneInput[] = [{ id: 'zone-center', type: TruckZoneType.CENTER, startXMm: 0, endXMm: 1000, startYMm: 0, endYMm: 1000 }];
+
+  function stackingInput(overrides: { products: PlannerProductInput[] }): LoadingPlannerInput {
+    return {
+      truck: {
+        id: 'truck-stacking',
+        loadingMethod: LoadingMethod.REAR,
+        maxPayloadKg: 24_000,
+        lengthMm: 1000,
+        widthMm: 1000,
+        heightMm: 3000,
+        zones: singleCenterZone,
+        tiers: [],
+      },
+      destinations: [{ id: 'destination-1', name: 'First stop', unloadingOrder: 1 }],
+      products: overrides.products,
+    };
+  }
+
+  it('never places a product above its maxTier, leaving it unplaced when only a higher tier surface is available', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      stackingInput({
+        products: [
+          createProduct({ id: 'base', lengthMm: 1000, widthMm: 1000, heightMm: 500, stackable: true }),
+          createProduct({ id: 'capped-topper', lengthMm: 1000, widthMm: 1000, heightMm: 400, stackable: true, maxTier: 1 }),
+        ],
+      }),
+    );
+
+    const base = result.placedItems.find((item) => item.productId === 'base');
+    const topper = result.placedItems.find((item) => item.productId === 'capped-topper');
+
+    expect(base).toBeDefined();
+    expect(base?.tier).toBe(1);
+    expect(topper).toBeUndefined();
+    expect(result.unplacedItems).toEqual([expect.objectContaining({ productId: 'capped-topper' })]);
+  });
+
+  it('stacks a product onto tier 2 when maxTier is undefined (identity regression for the same fixture)', () => {
+    const result = new HeuristicLoadingPlanner().generate(
+      stackingInput({
+        products: [
+          createProduct({ id: 'base', lengthMm: 1000, widthMm: 1000, heightMm: 500, stackable: true }),
+          createProduct({ id: 'uncapped-topper', lengthMm: 1000, widthMm: 1000, heightMm: 400, stackable: true }),
+        ],
+      }),
+    );
+
+    const topper = result.placedItems.find((item) => item.productId === 'uncapped-topper');
+    expect(topper).toBeDefined();
+    expect(topper?.tier).toBe(2);
+  });
+});

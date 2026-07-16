@@ -6,6 +6,7 @@ import { Bounds, Box, isWithinBounds, isWithinHeight, overlaps3D, supports } fro
 import { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loading-planner/loading-planner.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdatePlacedItemDto } from './dto/update-placed-item.dto';
+import { decimalToNumber, operationToPlannerInput, OperationForPlannerInput } from './operation-to-planner-input';
 
 const loadingPlanInclude = Prisma.validator<Prisma.LoadingPlanInclude>()({
   operation: { select: { id: true, code: true, status: true } },
@@ -38,7 +39,6 @@ const reportPlanInclude = Prisma.validator<Prisma.LoadingPlanInclude>()({
 
 type LoadingPlanWithRelations = Prisma.LoadingPlanGetPayload<{ include: typeof loadingPlanInclude }>;
 type ReportPlanWithRelations = Prisma.LoadingPlanGetPayload<{ include: typeof reportPlanInclude }>;
-type Decimalish = Prisma.Decimal | number | string | null | undefined;
 type RecalculationPlan = Prisma.LoadingPlanGetPayload<{
   include: {
     operation: { include: { truck: { include: { zones: true; tiers: true } } } };
@@ -373,60 +373,16 @@ export class LoadingPlansService {
     return this.toDto(updatedPlan);
   }
 
-  private toPlannerInput(operation: Prisma.LoadOperationGetPayload<{
-    include: {
-      truck: { include: { zones: true; tiers: true } };
-      destinations: true;
-      products: { include: { destination: true } };
-      plans: { select: { version: true } };
-    };
-  }>): LoadingPlannerInput {
-    return {
-      truck: {
-        id: operation.truck!.id,
-        loadingMethod: operation.truck!.loadingMethod,
-        maxPayloadKg: decimalToNumber(operation.truck!.maxPayloadKg),
-        lengthMm: operation.truck!.lengthMm ?? undefined,
-        widthMm: operation.truck!.widthMm ?? undefined,
-        heightMm: operation.truck!.heightMm ?? undefined,
-        zones: operation.truck!.zones.map((zone) => ({
-          id: zone.id,
-          type: zone.type,
-          maxWeightKg: decimalToNumber(zone.maxWeightKg),
-          startXMm: zone.startXMm ?? undefined,
-          endXMm: zone.endXMm ?? undefined,
-          startYMm: zone.startYMm ?? undefined,
-          endYMm: zone.endYMm ?? undefined,
-        })),
-        tiers: operation.truck!.tiers.map((tier) => ({
-          id: tier.id,
-          level: tier.level,
-          maxHeightMm: tier.maxHeightMm ?? undefined,
-          maxWeightKg: decimalToNumber(tier.maxWeightKg),
-        })),
-      },
-      destinations: operation.destinations.map((destination) => ({
-        id: destination.id,
-        name: destination.name,
-        unloadingOrder: destination.unloadingOrder,
-      })),
-      products: operation.products.map((product) => ({
-        id: product.id,
-        code: product.code,
-        family: product.family,
-        description: product.description ?? undefined,
-        destinationId: product.destinationId ?? undefined,
-        quantity: product.quantity,
-        weightKg: decimalToNumber(product.weightKg),
-        lengthMm: product.lengthMm ?? undefined,
-        widthMm: product.widthMm ?? undefined,
-        heightMm: product.heightMm ?? undefined,
-        stackable: product.stackable,
-        rotationAllowed: product.rotationAllowed,
-        fragile: product.fragile,
-        maxStackLoadKg: decimalToNumber(product.maxStackLoadKg),
-      })),
-    };
+  /**
+   * Thin delegate (loading-agent-llm Phase 4 DRY extraction) — the actual
+   * Prisma→domain mapping now lives in `operationToPlannerInput` so
+   * `planning-agent.service` (Phase 8) can reuse it without depending on
+   * this service. Kept as a private method (not inlined at the call site)
+   * so `loading-plans.service.spec.ts`'s existing `(service as never as
+   * {...}).toPlannerInput(operation)` access keeps working unchanged.
+   */
+  private toPlannerInput(operation: OperationForPlannerInput): LoadingPlannerInput {
+    return operationToPlannerInput(operation);
   }
 
   private toMetricsCreateInput(result: LoadingPlannerResult) {
@@ -846,9 +802,4 @@ export class LoadingPlansService {
   private unitKey(productId: string, unitIndex: number) {
     return `${productId}:${unitIndex}`;
   }
-}
-
-function decimalToNumber(value: Decimalish) {
-  if (value === null || value === undefined) return undefined;
-  return Number(value);
 }

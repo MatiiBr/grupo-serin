@@ -56,6 +56,20 @@ export interface PlannerProductInput {
   rotationAllowed: boolean;
   fragile: boolean;
   maxStackLoadKg?: number;
+  /**
+   * When set, confines placement to these zone types only (hard filter in
+   * `placeUnit`). `undefined` = unrestricted (identity — matches pre-existing
+   * behavior). Additive field for loading-agent-llm ZONE_RESTRICTION /
+   * FAMILY_PLACEMENT_BAN hard rules.
+   */
+  allowedZones?: TruckZoneTypeValue[];
+  /**
+   * When set, the product may never rest on a surface whose tier exceeds
+   * this value (hard filter in `evaluateCandidate`). `undefined` =
+   * unrestricted (identity). Additive field for loading-agent-llm
+   * TIER_RESTRICTION hard rule.
+   */
+  maxTier?: number;
 }
 
 export interface LoadingPlannerInput {

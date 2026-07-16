@@ -189,7 +189,11 @@ export class HeuristicLoadingPlanner {
 
     const targetZone = zones.find((zone) => zone.type === unit.targetZone);
     const fallbackZones = zones.filter((zone) => zone.type !== unit.targetZone);
-    const candidateZones = targetZone ? [targetZone, ...fallbackZones] : fallbackZones;
+    const orderedZones = targetZone ? [targetZone, ...fallbackZones] : fallbackZones;
+    // Additive hard filter (loading-agent-llm 1.3): undefined = unrestricted (identity).
+    const candidateZones = unit.allowedZones
+      ? orderedZones.filter((zone) => unit.allowedZones!.includes(zone.type))
+      : orderedZones;
     const orientations = this.orientations(unit);
 
     let blockedByStacking = false;
@@ -346,6 +350,9 @@ export class HeuristicLoadingPlanner {
     const box: Box = { ...rect, zMm: surface.zMm, heightMm: unit.heightMm ?? 0 };
 
     if (truckHeight > 0 && !isWithinHeight(box, truckHeight)) return { blockedByStacking: false };
+
+    // Additive hard filter (loading-agent-llm 1.3): undefined = unrestricted (identity).
+    if (unit.maxTier !== undefined && surface.tier > unit.maxTier) return { blockedByStacking: false };
 
     const tier = tiers.find((candidate) => candidate.level === surface.tier);
     if (tier?.maxHeightMm !== undefined && (unit.heightMm ?? 0) > tier.maxHeightMm) return { blockedByStacking: false };
