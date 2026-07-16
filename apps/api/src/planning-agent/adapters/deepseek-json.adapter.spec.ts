@@ -185,4 +185,17 @@ describe('DeepSeekJsonAdapter.explainPlan', () => {
     expect(explanation).toBe('The plan places P-100 in CENTER and confines P-200 to DOOR_SIDE.');
     expect(client.chatCompletion).toHaveBeenCalledTimes(1);
   });
+
+  it('instructs the model to explain the plan in Spanish for the operator (regression: was hardcoded English)', async () => {
+    const client = mockClient('Poné el pallet en el piso.');
+    const adapter = new DeepSeekJsonAdapter(client);
+    const plan = { placedItems: [], unplacedItems: [], steps: [], alerts: [], metrics: {} } as unknown as LoadingPlannerResult;
+    const constraints = { version: 1 as const, hardRules: [] };
+
+    await adapter.explainPlan({ plan, constraints });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    expect(systemMessage?.content.toLowerCase()).toContain('espanol');
+  });
 });
