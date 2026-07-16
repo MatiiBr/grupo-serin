@@ -1,4 +1,4 @@
-import { AlertSeverity, AlertType, LoadingMethod, OperationStatus, PlanStatus, ProductFamily, TruckZoneType } from '@prisma/client';
+import { AlertSeverity, AlertType, LoadingMethod, OperationStatus, ProductFamily, TruckZoneType } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { AuditService } from '../audit/audit.service';
 import { overlaps3D } from '../domain/loading-planner/geometry';
@@ -91,7 +91,7 @@ describe('LoadingPlansService.recalculatePlan — per-tier and per-zone weight c
       createPlacedItem({ id: 'b', xMm: 600, yMm: 0, tier: 1, product: { code: 'P-2', weightKg: 100, fragile: false } }),
     ];
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
 
     expect(validation.alerts).toContainEqual(
       expect.objectContaining({ type: AlertType.MAX_WEIGHT_EXCEEDED, severity: AlertSeverity.CRITICAL }),
@@ -103,7 +103,7 @@ describe('LoadingPlansService.recalculatePlan — per-tier and per-zone weight c
     const plan = createPlan();
     const items = [createPlacedItem({ id: 'a', product: { code: 'P-1', weightKg: 100_000, fragile: false } })];
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
 
     expect(validation.alerts).not.toContainEqual(expect.objectContaining({ type: AlertType.MAX_WEIGHT_EXCEEDED }));
   });
@@ -119,7 +119,7 @@ describe('LoadingPlansService.recalculatePlan — per-tier and per-zone weight c
       createPlacedItem({ id: 'b', xMm: 600, yMm: 0, product: { code: 'P-2', weightKg: 100, fragile: false } }),
     ];
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
 
     expect(validation.alerts).toContainEqual(
       expect.objectContaining({ type: AlertType.MAX_WEIGHT_EXCEEDED, severity: AlertSeverity.CRITICAL }),
@@ -134,7 +134,7 @@ describe('LoadingPlansService.recalculatePlan — HEIGHT_EXCEEDED distinct from 
     const plan = createPlan({ truck });
     const items = [createPlacedItem({ zMm: 800, heightMm: 500 })];
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
 
     expect(validation.alerts).toContainEqual(expect.objectContaining({ type: AlertType.HEIGHT_EXCEEDED }));
     expect(validation.alerts).not.toContainEqual(expect.objectContaining({ type: AlertType.OUT_OF_BOUNDS }));
@@ -146,7 +146,7 @@ describe('LoadingPlansService.recalculatePlan — HEIGHT_EXCEEDED distinct from 
     const plan = createPlan({ truck });
     const items = [createPlacedItem({ xMm: 900, lengthMm: 500, heightMm: 500 })];
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
 
     expect(validation.alerts).toContainEqual(expect.objectContaining({ type: AlertType.OUT_OF_BOUNDS }));
     expect(validation.alerts).not.toContainEqual(expect.objectContaining({ type: AlertType.HEIGHT_EXCEEDED }));
@@ -160,7 +160,7 @@ describe('LoadingPlansService.recalculatePlan — STACKING_RISK on fragile bases
     const base = createPlacedItem({ id: 'base', tier: 1, xMm: 0, yMm: 0, zMm: 0, heightMm: 400, lengthMm: 500, widthMm: 500, product: { code: 'BASE', weightKg: 200, fragile: true } });
     const topper = createPlacedItem({ id: 'topper', tier: 2, xMm: 0, yMm: 0, zMm: 400, heightMm: 300, lengthMm: 500, widthMm: 500, product: { code: 'TOP', weightKg: 50, fragile: false } });
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, [base, topper]);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, [base, topper]);
 
     expect(validation.alerts).toContainEqual(
       expect.objectContaining({ type: AlertType.STACKING_RISK, placedItemId: 'topper', severity: AlertSeverity.WARNING }),
@@ -173,7 +173,7 @@ describe('LoadingPlansService.recalculatePlan — STACKING_RISK on fragile bases
     const base = createPlacedItem({ id: 'base', tier: 1, xMm: 0, yMm: 0, zMm: 0, heightMm: 400, lengthMm: 500, widthMm: 500, product: { code: 'BASE', weightKg: 200, fragile: false } });
     const topper = createPlacedItem({ id: 'topper', tier: 2, xMm: 0, yMm: 0, zMm: 400, heightMm: 300, lengthMm: 500, widthMm: 500, product: { code: 'TOP', weightKg: 50, fragile: false } });
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, [base, topper]);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, [base, topper]);
 
     expect(validation.alerts).not.toContainEqual(expect.objectContaining({ type: AlertType.STACKING_RISK }));
   });
@@ -192,7 +192,7 @@ describe('LoadingPlansService.recalculatePlan — overlap rule parity with the g
       createPlacedItem({ id: 'b', ...b, product: { code: 'B', weightKg: 10, fragile: false } }),
     ];
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
 
     expect(validation.alerts).toContainEqual(expect.objectContaining({ type: AlertType.OVERLAP, placedItemId: 'a' }));
   });
@@ -209,7 +209,7 @@ describe('LoadingPlansService.recalculatePlan — overlap rule parity with the g
       createPlacedItem({ id: 'b', ...b, tier: 2, product: { code: 'B', weightKg: 10, fragile: false } }),
     ];
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
 
     expect(validation.alerts).not.toContainEqual(expect.objectContaining({ type: AlertType.OVERLAP }));
   });
@@ -278,7 +278,7 @@ describe('LoadingPlansService.recalculatePlan — overlap rule parity with the g
       }),
     );
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, items);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, items);
     const divergentTypes: AlertType[] = [AlertType.OVERLAP, AlertType.OUT_OF_BOUNDS, AlertType.HEIGHT_EXCEEDED];
     const divergent = validation.alerts.filter((alert: { type: AlertType }) => divergentTypes.includes(alert.type));
 
@@ -318,7 +318,7 @@ describe('LoadingPlansService.recalculatePlan — pre-migration single-floor pla
       product: { code: 'P-1', weightKg: 500, fragile: false },
     });
 
-    const validation = (service as never as { recalculatePlan: Function }).recalculatePlan(plan, [legacyItem]);
+    const validation = (service as never as { recalculatePlan: (plan: unknown, items: unknown) => { alerts: { type: AlertType }[] } }).recalculatePlan(plan, [legacyItem]);
 
     const blockingTypes: AlertType[] = [
       AlertType.OVERLAP,
