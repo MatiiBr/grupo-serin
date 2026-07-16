@@ -57,6 +57,32 @@ describe('DeepSeekJsonAdapter.planConstraints — golden path', () => {
     const userMessage = params.messages.find((message: { role: string }) => message.role === 'user');
     expect(userMessage.content).toBe('Any rule.');
   });
+
+  it('spells out the exact ConstraintSetDto field names per rule type in the system prompt (regression: DeepSeek once emitted "restrictedZone" instead of "zone")', async () => {
+    const client = mockClient(JSON.stringify({ version: 1, hardRules: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await adapter.planConstraints({ rulesText: 'Any rule.', catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    const content: string = systemMessage.content;
+
+    // Every rule type's exact field set must be spelled out — no room for
+    // a plausible-but-wrong field name like "restrictedZone".
+    expect(content).toContain('STACKING_PROHIBITION{type,productCode}');
+    expect(content).toContain('FRAGILE_ON_TOP{type,productCode}');
+    expect(content).toContain('ZONE_RESTRICTION{type,productCode,zone}');
+    expect(content).toContain('TIER_RESTRICTION{type,productCode,maxTier}');
+    expect(content).toContain('FAMILY_PLACEMENT_BAN{type,family,zone}');
+
+    // The literal field name "zone" must be present, and "restrictedZone" must NOT.
+    expect(content).not.toContain('restrictedZone');
+
+    // One concrete JSON example is included, and it uses the real "zone" field name.
+    expect(content).toMatch(/"hardRules"\s*:\s*\[/);
+    expect(content).toContain('"zone"');
+  });
 });
 
 describe('DeepSeekJsonAdapter.planConstraints — invalid responses (typed errors, no crash)', () => {

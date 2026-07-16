@@ -41,7 +41,16 @@ const SYSTEM_PROMPT_HEADER = [
   'You are a logistics loading-constraint extraction agent.',
   'Read the operator instructions and extract ONLY hard placement rules.',
   'Respond with ONLY a single JSON object matching this exact schema — no prose, no markdown code fences, no explanation:',
-  '{ "version": 1, "hardRules": [ { "type": "STACKING_PROHIBITION" | "FRAGILE_ON_TOP" | "ZONE_RESTRICTION" | "TIER_RESTRICTION" | "FAMILY_PLACEMENT_BAN", ... } ], "notes"?: string }',
+  '{ "version": 1, "hardRules": [ <rule>, ... ], "notes"?: string }',
+  'Each <rule> MUST be one of these EXACT shapes — use these EXACT field names, nothing else. The truck-zone field is ALWAYS named "zone" — never a synonym, never a prefixed/suffixed variant:',
+  '  STACKING_PROHIBITION{type,productCode}',
+  '  FRAGILE_ON_TOP{type,productCode}',
+  '  ZONE_RESTRICTION{type,productCode,zone}',
+  '  TIER_RESTRICTION{type,productCode,maxTier}',
+  '  FAMILY_PLACEMENT_BAN{type,family,zone}',
+  'Field meanings: "type" is the rule discriminator (one of the five names above); "productCode" is a single product code; "family" is a product family; "zone" is a truck zone; "maxTier" is a positive integer (max stacking tier, 1 = ground tier).',
+  'Example — "No stacking on P-100 and P-200 must stay in DOOR_SIDE":',
+  '{ "version": 1, "hardRules": [ { "type": "STACKING_PROHIBITION", "productCode": "P-100" }, { "type": "ZONE_RESTRICTION", "productCode": "P-200", "zone": "DOOR_SIDE" } ] }',
   'Every "productCode" and "family" you reference MUST come from the catalog below — never invent one.',
 ].join('\n');
 

@@ -24,6 +24,8 @@ import { PlanningAgentService } from './planning-agent.service';
   providers: [
     {
       provide: DeepSeekClient,
+      // `deepseekConfig`'s shape (baseUrl/apiKey/model + timeoutMs/maxRetries/
+      // maxConcurrency/minIntervalMs) matches `DeepSeekClientConfig` directly.
       useFactory: (config: ConfigType<typeof deepseekConfig>) => new DeepSeekClient(config),
       inject: [deepseekConfig.KEY],
     },

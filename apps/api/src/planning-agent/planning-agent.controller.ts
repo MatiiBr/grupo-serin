@@ -1,5 +1,6 @@
-import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Param, ParseUUIDPipe, Post, UseFilters } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { DeepSeekExceptionFilter } from './deepseek-exception.filter';
 import { PlanAgentRequestDto } from './dto/plan-agent-request.dto';
 import { PlanningAgentService } from './planning-agent.service';
 
@@ -10,9 +11,14 @@ import { PlanningAgentService } from './planning-agent.service';
  * `LoadingPlan`: it returns a computed-only preview (plan + explanation +
  * applied/dropped-rule report) for the operator to review before running
  * the deterministic generator for real.
+ *
+ * `@UseFilters(DeepSeekExceptionFilter)` (resilience protocol) — maps
+ * `DeepSeekClient`/`DeepSeekJsonAdapter`'s typed errors (timeout, rate limit,
+ * exhausted retries) to meaningful HTTP statuses instead of a generic 500.
  */
 @ApiTags('planning-agent')
 @Controller()
+@UseFilters(DeepSeekExceptionFilter)
 export class PlanningAgentController {
   constructor(private readonly planningAgentService: PlanningAgentService) {}
 
