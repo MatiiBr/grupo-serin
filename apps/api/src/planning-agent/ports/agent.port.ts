@@ -35,3 +35,10 @@ export interface AgentPort {
   /** Produces a human-readable explanation of a generated plan given the constraints that were applied. */
   explainPlan(params: ExplainPlanParams): Promise<string>;
 }
+
+/**
+ * loading-agent-llm Phase 8 — DI token for `AgentPort`. Interfaces have no
+ * runtime representation, so Nest needs a concrete token to bind the
+ * `DeepSeekJsonAdapter` (default) implementation to in `PlanningAgentModule`.
+ */
+export const AGENT_PORT = Symbol('AGENT_PORT');

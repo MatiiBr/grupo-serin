@@ -8,6 +8,7 @@ import { DispatchModule } from './dispatch/dispatch.module';
 import { LoadingPlansModule } from './loading-plans/loading-plans.module';
 import { OperationsModule } from './operations/operations.module';
 import { OrdersModule } from './orders/orders.module';
+import { PlanningAgentModule } from './planning-agent/planning-agent.module';
 import { PreparationModule } from './preparation/preparation.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
@@ -31,6 +32,7 @@ import { TrucksModule } from './trucks/trucks.module';
     TransportModule,
     OrdersModule,
     LoadingPlansModule,
+    PlanningAgentModule,
   ],
   controllers: [AppController],
 })
