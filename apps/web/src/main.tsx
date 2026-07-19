@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlanStatus, ProductFamily } from '@camiones/shared';
 import { Canvas } from '@react-three/fiber';
-import { Edges, OrbitControls, Text } from '@react-three/drei';
+import { Edges, Environment, Lightformer, OrbitControls, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { type ReactElement, StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -564,8 +564,17 @@ function PlannerScene({ items, selectedItemId, sequenceByPlacedItemId, itemStatu
     <div className="planner-scene">
       <Canvas camera={{ position: [7.5, 5.2, 8], fov: 36 }} shadows>
         <color attach="background" args={["#15120e"]} />
-        <ambientLight intensity={0.72} />
-        <directionalLight position={[6, 9, 5]} intensity={1.35} castShadow />
+        <ambientLight intensity={0.42} />
+        <hemisphereLight color="#fff4e2" groundColor="#2a2218" intensity={0.55} />
+        <directionalLight position={[6, 9, 5]} intensity={1.5} castShadow shadow-mapSize={[1024, 1024]} shadow-bias={-0.0004} />
+        <directionalLight position={[-7, 5, -4]} intensity={0.5} color="#cfe0ff" />
+        <directionalLight position={[0, 5, -9]} intensity={0.7} color="#ffcf9a" />
+        {/* studio environment gives the steel real reflections (no external asset) */}
+        <Environment resolution={128} frames={1}>
+          <Lightformer form="rect" intensity={2.4} position={[0, 6, 3]} scale={[12, 6, 1]} color="#fff3e0" />
+          <Lightformer form="rect" intensity={1.1} position={[-7, 3, -4]} scale={[7, 7, 1]} color="#cfe0ff" />
+          <Lightformer form="rect" intensity={0.9} position={[7, 2, -3]} scale={[7, 7, 1]} color="#ffd9a8" />
+        </Environment>
         <TruckFrame dimensions={dimensions} scale={scale} />
         {items.map((item) => (
           <PlacedItemBox key={item.id} item={item} sequence={sequenceByPlacedItemId.get(item.id)} alertStatus={itemStatusByPlacedItemId.get(item.id)} scale={scale} truckLengthMm={dimensions.lengthMm} truckWidthMm={dimensions.widthMm} selected={item.id === selectedItemId} onSelect={onSelect} />
