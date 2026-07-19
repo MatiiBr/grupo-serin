@@ -27,6 +27,8 @@ export interface DeepSeekClientConfig {
   baseUrl?: string;
   apiKey?: string;
   model: string;
+  /** multi-agent refactor — optional base temperature; omitted from every request body unless set (base or per-call). */
+  temperature?: number;
   timeoutMs?: number;
   maxRetries?: number;
   maxConcurrency?: number;
@@ -40,6 +42,10 @@ export interface DeepSeekChatMessage {
 
 export interface DeepSeekChatCompletionParams {
   messages: DeepSeekChatMessage[];
+  /** multi-agent refactor — per-call override; defaults to the client's configured base `model` when omitted. */
+  model?: string;
+  /** multi-agent refactor — per-call override; defaults to the client's configured base `temperature` (itself optional) when omitted. */
+  temperature?: number;
 }
 
 /** OpenAI-compatible function-tool definition for `tools: [...]`. */
@@ -59,6 +65,10 @@ export interface DeepSeekChatCompletionWithToolsParams {
   tools: DeepSeekToolDefinition[];
   /** Defaults to `'auto'` when omitted. Pass `{ type: 'function', function: { name } }` to FORCE a specific tool call. */
   toolChoice?: DeepSeekToolChoice;
+  /** multi-agent refactor — per-call override; defaults to the client's configured base `model` when omitted. */
+  model?: string;
+  /** multi-agent refactor — per-call override; defaults to the client's configured base `temperature` (itself optional) when omitted. */
+  temperature?: number;
 }
 
 interface DeepSeekResponseToolCall {
@@ -225,9 +235,8 @@ export class DeepSeekClient {
 
   async chatCompletion(params: DeepSeekChatCompletionParams): Promise<string> {
     return this.queue.enqueue(() =>
-      this.executeWithRetry(
-        { model: this.config.model, messages: params.messages },
-        (payload) => payload.choices[0].message.content ?? '',
+      this.executeWithRetry(this.buildBody({ messages: params.messages }, params.model, params.temperature), (payload) =>
+        payload.choices[0].message.content ?? '',
       ),
     );
   }
@@ -243,15 +252,33 @@ export class DeepSeekClient {
   async chatCompletionWithTools(params: DeepSeekChatCompletionWithToolsParams): Promise<string> {
     return this.queue.enqueue(() =>
       this.executeWithRetry(
-        {
-          model: this.config.model,
-          messages: params.messages,
-          tools: params.tools,
-          tool_choice: params.toolChoice ?? 'auto',
-        },
+        this.buildBody(
+          { messages: params.messages, tools: params.tools, tool_choice: params.toolChoice ?? 'auto' },
+          params.model,
+          params.temperature,
+        ),
         extractToolCallArguments,
       ),
     );
+  }
+
+  /**
+   * multi-agent refactor — merges the resolved `model` (per-call override ??
+   * base `config.model`) into the request body, and includes `temperature`
+   * ONLY when a value is actually resolved (per-call override ?? base
+   * `config.temperature`) — so the body stays BYTE-IDENTICAL to before this
+   * refactor when no model/temperature override exists anywhere.
+   */
+  private buildBody(rest: Record<string, unknown>, modelOverride: string | undefined, temperatureOverride: number | undefined): Record<string, unknown> {
+    const model = modelOverride ?? this.config.model;
+    const temperature = temperatureOverride ?? this.config.temperature;
+    const body: Record<string, unknown> = { model, ...rest };
+
+    if (temperature !== undefined) {
+      body.temperature = temperature;
+    }
+
+    return body;
   }
 
   private async executeWithRetry<T>(body: Record<string, unknown>, extract: (payload: DeepSeekChatCompletionResponse) => T): Promise<T> {

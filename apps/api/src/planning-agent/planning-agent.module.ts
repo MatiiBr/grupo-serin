@@ -1,24 +1,33 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigType } from '@nestjs/config';
 import { DeepSeekClient } from './adapters/deepseek.client';
+import { buildAgentTeam } from './agents/agent-team.factory';
 import { deepseekConfig } from './config/deepseek.config';
 import { AGENT_PORT } from './ports/agent.port';
 import { PlanningAgentController } from './planning-agent.controller';
-import { selectAgentPortAdapter } from './planning-agent-port.factory';
 import { PlanningAgentService } from './planning-agent.service';
 
 /**
- * loading-agent-llm Phase 8.6 + real tool-use adapter — wires the
- * agent-assisted planning PREVIEW feature. `ConfigModule.forFeature(deepseekConfig)`
- * registers the `DEEPSEEK_BASE_URL`/`DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`/
- * `DEEPSEEK_ADAPTER` namespace (Phase 5.1); `DeepSeekClient` is built from it
- * by KEY; `AGENT_PORT` binds via `selectAgentPortAdapter` (see
- * `planning-agent-port.factory.ts`) to `DeepSeekJsonAdapter` (DEFAULT,
- * `DEEPSEEK_ADAPTER` unset or `'json'`) or `DeepSeekToolUseAdapter`
- * (opt-in, `DEEPSEEK_ADAPTER=tooluse` — real OpenAI-compatible
- * tool/function-calling, gated on unverified Huawei Cloud DeepSeek
- * tool-calling support). Nothing changes for existing deployments unless
- * `DEEPSEEK_ADAPTER=tooluse` is set explicitly.
+ * loading-agent-llm Phase 8.6 + real tool-use adapter + multi-agent refactor
+ * — wires the agent-assisted planning PREVIEW feature.
+ * `ConfigModule.forFeature(deepseekConfig)` registers the
+ * `DEEPSEEK_BASE_URL`/`DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`/`DEEPSEEK_ADAPTER`/
+ * per-role `agents` namespace; `DeepSeekClient` is built from it by KEY.
+ *
+ * `AGENT_PORT` now binds to an `AgentTeam` (see `agents/agent-team.ts` +
+ * `agents/agent-team.factory.ts`) — a formalized 4-role-agent structure
+ * (`RuleExtractionAgent`/`RulePatchAgent`/`PlanExplanationAgent`/
+ * `DiagnosisAgent`) instead of a single `DeepSeekJsonAdapter`/
+ * `DeepSeekToolUseAdapter` instance directly. The json/tooluse selection
+ * (`DEEPSEEK_ADAPTER`, gated on unverified Huawei Cloud DeepSeek
+ * tool-calling support) is preserved — `buildAgentTeam` forwards
+ * `config.adapter` to the two STRUCTURED role-agents
+ * (`RuleExtractionAgent`/`RulePatchAgent`), which reuse
+ * `DeepSeekJsonAdapter`/`DeepSeekToolUseAdapter` UNCHANGED under the hood.
+ * `PlanningAgentService` is UNCHANGED — it only ever depended on
+ * `AgentPort`, never on a concrete adapter. Nothing changes behaviorally for
+ * existing deployments unless `DEEPSEEK_ADAPTER=tooluse` and/or a per-role
+ * `DEEPSEEK_MODEL_*`/`DEEPSEEK_TEMPERATURE_*` override is set explicitly.
  */
 @Module({
   imports: [ConfigModule.forFeature(deepseekConfig)],
@@ -33,7 +42,7 @@ import { PlanningAgentService } from './planning-agent.service';
     },
     {
       provide: AGENT_PORT,
-      useFactory: (client: DeepSeekClient, config: ConfigType<typeof deepseekConfig>) => selectAgentPortAdapter(config.adapter, client),
+      useFactory: (client: DeepSeekClient, config: ConfigType<typeof deepseekConfig>) => buildAgentTeam(client, config.adapter, config.agents),
       inject: [DeepSeekClient, deepseekConfig.KEY],
     },
     PlanningAgentService,
