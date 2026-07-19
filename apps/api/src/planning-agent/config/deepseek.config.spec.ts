@@ -19,6 +19,7 @@ const ENV_KEYS = [
   'DEEPSEEK_MAX_CONCURRENCY',
   'DEEPSEEK_MIN_INTERVAL_MS',
   'DEEPSEEK_MAX_PLAN_ATTEMPTS',
+  'DEEPSEEK_ADAPTER',
 ] as const;
 
 describe('deepseekConfig (loading-agent-llm 5.1)', () => {
@@ -137,5 +138,29 @@ describe('deepseekConfig (loading-agent-llm 5.1)', () => {
     const config = deepseekConfig();
 
     expect(config.maxPlanAttempts).toBe(3);
+  });
+
+  it('real tool-use adapter — defaults adapter to "json" when DEEPSEEK_ADAPTER is unset', () => {
+    delete process.env.DEEPSEEK_ADAPTER;
+
+    const config = deepseekConfig();
+
+    expect(config.adapter).toBe('json');
+  });
+
+  it('real tool-use adapter — reads adapter "tooluse" from DEEPSEEK_ADAPTER', () => {
+    process.env.DEEPSEEK_ADAPTER = 'tooluse';
+
+    const config = deepseekConfig();
+
+    expect(config.adapter).toBe('tooluse');
+  });
+
+  it('real tool-use adapter — falls back to "json" for an unrecognized DEEPSEEK_ADAPTER value', () => {
+    process.env.DEEPSEEK_ADAPTER = 'not-a-real-adapter';
+
+    const config = deepseekConfig();
+
+    expect(config.adapter).toBe('json');
   });
 });

@@ -1,22 +1,24 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigType } from '@nestjs/config';
-import { DeepSeekJsonAdapter } from './adapters/deepseek-json.adapter';
 import { DeepSeekClient } from './adapters/deepseek.client';
 import { deepseekConfig } from './config/deepseek.config';
 import { AGENT_PORT } from './ports/agent.port';
 import { PlanningAgentController } from './planning-agent.controller';
+import { selectAgentPortAdapter } from './planning-agent-port.factory';
 import { PlanningAgentService } from './planning-agent.service';
 
 /**
- * loading-agent-llm Phase 8.6 — wires the agent-assisted planning PREVIEW
- * feature. `ConfigModule.forFeature(deepseekConfig)` registers the
- * `DEEPSEEK_BASE_URL`/`DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL` namespace (Phase
- * 5.1); `DeepSeekClient` is built from it by KEY; `AGENT_PORT` binds to
- * `DeepSeekJsonAdapter` — the DEFAULT `AgentPort` implementation (Phase
- * 6.3). Swap the `AGENT_PORT` provider to point at
- * `DeepSeekToolUseAdapter` once Huawei function-calling is verified — no
- * other file needs to change (`PlanningAgentService` only depends on the
- * `AgentPort` interface).
+ * loading-agent-llm Phase 8.6 + real tool-use adapter — wires the
+ * agent-assisted planning PREVIEW feature. `ConfigModule.forFeature(deepseekConfig)`
+ * registers the `DEEPSEEK_BASE_URL`/`DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`/
+ * `DEEPSEEK_ADAPTER` namespace (Phase 5.1); `DeepSeekClient` is built from it
+ * by KEY; `AGENT_PORT` binds via `selectAgentPortAdapter` (see
+ * `planning-agent-port.factory.ts`) to `DeepSeekJsonAdapter` (DEFAULT,
+ * `DEEPSEEK_ADAPTER` unset or `'json'`) or `DeepSeekToolUseAdapter`
+ * (opt-in, `DEEPSEEK_ADAPTER=tooluse` — real OpenAI-compatible
+ * tool/function-calling, gated on unverified Huawei Cloud DeepSeek
+ * tool-calling support). Nothing changes for existing deployments unless
+ * `DEEPSEEK_ADAPTER=tooluse` is set explicitly.
  */
 @Module({
   imports: [ConfigModule.forFeature(deepseekConfig)],
@@ -31,8 +33,8 @@ import { PlanningAgentService } from './planning-agent.service';
     },
     {
       provide: AGENT_PORT,
-      useFactory: (client: DeepSeekClient) => new DeepSeekJsonAdapter(client),
-      inject: [DeepSeekClient],
+      useFactory: (client: DeepSeekClient, config: ConfigType<typeof deepseekConfig>) => selectAgentPortAdapter(config.adapter, client),
+      inject: [DeepSeekClient, deepseekConfig.KEY],
     },
     PlanningAgentService,
   ],

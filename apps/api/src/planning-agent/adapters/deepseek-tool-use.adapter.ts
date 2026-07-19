@@ -1,73 +1,225 @@
-import type { ConstraintSet } from '@camiones/shared';
-import type { AgentPort, ExplainPlanParams, PlanConstraintsParams, ReviseConstraintsParams } from '../ports/agent.port';
-import type { DeepSeekClient } from './deepseek.client';
+import { ProductFamily, TruckZoneType, type ConstraintSet } from '@camiones/shared';
+import type { AgentPort, CatalogContext, ExplainPlanParams, PlanConstraintsParams, PlanProblems, ReviseConstraintsParams } from '../ports/agent.port';
+import { parseAndValidateConstraintSet } from './constraint-set-parser';
+import {
+  EXPLAIN_PLAN_SYSTEM_PROMPT,
+  formatCatalogContextLines,
+  REVISION_SYSTEM_PROMPT_ADDENDUM,
+  SYSTEM_PROMPT_HEADER,
+} from './deepseek-json.adapter';
+import { DeepSeekNoToolCallError, type DeepSeekChatMessage, type DeepSeekClient, type DeepSeekToolDefinition } from './deepseek.client';
 
 /**
- * loading-agent-llm Phase 6.4 — EXPERIMENTAL scaffold. NOT wired as the
- * default `AgentPort` (`DeepSeekJsonAdapter` is — see its module docstring
- * and design.md's "JSON-mode adapter default"). design.md gates a real
- * implementation on "only if Huawei function-calling verified" — that
- * verification has not happened, so both methods below reject with a typed
- * error rather than guessing at an unconfirmed wire format. The tool schema
- * mirroring `ConstraintSet` is documented here so the real implementation
- * can be dropped in later without redesigning the contract.
+ * loading-agent-llm — REAL `AgentPort` implementation using OpenAI-compatible
+ * native tool/function-calling (`chatCompletionWithTools`). NOT the default
+ * `AgentPort` — `DeepSeekJsonAdapter` is (see its module docstring and
+ * design.md's "JSON-mode adapter default"). Huawei Cloud's DeepSeek endpoint
+ * tool-calling support is UNVERIFIED against the real API; this adapter is
+ * OPT-IN via `DEEPSEEK_ADAPTER=tooluse` (see `deepseek.config.ts` +
+ * `planning-agent.module.ts`'s selection factory). If the endpoint does not
+ * actually honor `tools`/`tool_choice` at runtime (e.g. it silently ignores
+ * them and answers with prose, or 400s), `DeepSeekClient` surfaces a
+ * `DeepSeekNoToolCallError` / non-2xx status, which this adapter wraps into
+ * a `DeepSeekToolUseUnsupportedError` — a clear, typed signal to fall back to
+ * `DEEPSEEK_ADAPTER=json` (the safe default) rather than a confusing crash.
+ *
+ * `planConstraints`/`reviseConstraints` force the model to call
+ * `SET_CONSTRAINTS_TOOL` (`tool_choice: { type: 'function', function: { name:
+ * 'set_constraints' } }`) so structure is enforced by the function's JSON
+ * schema rather than free-form JSON-mode prose. The tool call's
+ * `arguments` string goes through the EXACT same
+ * `parseAndValidateConstraintSet` gate as `DeepSeekJsonAdapter` (see
+ * `constraint-set-parser.ts`) — same typed errors
+ * (`ConstraintSetParseError`/`ConstraintSetValidationError`) on
+ * malformed/schema-invalid arguments. System prompts reuse
+ * `SYSTEM_PROMPT_HEADER`/`REVISION_SYSTEM_PROMPT_ADDENDUM`/
+ * `formatCatalogContextLines` from `deepseek-json.adapter.ts` so the rule
+ * schema wording and catalog injection can never drift between the two
+ * adapters. `explainPlan` needs no structured output, so it reuses plain
+ * `chatCompletion` with the same Spanish system prompt as the JSON adapter.
  */
 
-/** JSON-Schema mirror of `ConstraintSet`, ready for a future `tools: [...]` payload once tool-calling is verified against the real Huawei Cloud DeepSeek endpoint. */
-export const CONSTRAINT_SET_TOOL_SCHEMA = {
-  name: 'propose_constraints',
-  description: 'Propose the ConstraintSet of hard loading rules extracted from the operator instructions.',
-  parameters: {
-    type: 'object',
-    required: ['version', 'hardRules'],
-    properties: {
-      version: { const: 1 },
-      hardRules: {
-        type: 'array',
-        items: {
-          type: 'object',
-          required: ['type'],
-          properties: {
-            type: {
-              enum: ['STACKING_PROHIBITION', 'FRAGILE_ON_TOP', 'ZONE_RESTRICTION', 'TIER_RESTRICTION', 'FAMILY_PLACEMENT_BAN'],
-            },
-            productCode: { type: 'string' },
-            family: { type: 'string' },
-            zone: { type: 'string' },
-            maxTier: { type: 'integer', minimum: 1 },
+const SET_CONSTRAINTS_TOOL_NAME = 'set_constraints';
+
+/**
+ * OpenAI-compatible function-tool JSON-schema mirror of `ConstraintSet`
+ * (`ConstraintSetDto`'s 6 discriminated hard-rule shapes, exact field
+ * names). The model MUST return the `ConstraintSet` by CALLING this tool —
+ * `tool_choice` in `callSetConstraintsTool` forces it — rather than emitting
+ * free JSON, so structure is enforced by the function schema itself.
+ */
+export const SET_CONSTRAINTS_TOOL: DeepSeekToolDefinition = {
+  type: 'function',
+  function: {
+    name: SET_CONSTRAINTS_TOOL_NAME,
+    description:
+      'Return the ConstraintSet of hard placement rules extracted from the operator instructions. You MUST call this function with the extracted rules — never answer with plain text.',
+    parameters: {
+      type: 'object',
+      required: ['version', 'hardRules'],
+      additionalProperties: false,
+      properties: {
+        version: { const: 1, description: 'Schema version. Always the literal 1.' },
+        hardRules: {
+          type: 'array',
+          description:
+            'Hard placement rules. Each item MUST match EXACTLY ONE of the 6 shapes below, using these EXACT field names — the truck-zone field is ALWAYS "zone", never a synonym like "restrictedZone".',
+          items: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['type', 'productCode'],
+                additionalProperties: false,
+                properties: {
+                  type: { const: 'STACKING_PROHIBITION' },
+                  productCode: { type: 'string', description: 'A single product code from the known catalog.' },
+                },
+              },
+              {
+                type: 'object',
+                required: ['type', 'productCode'],
+                additionalProperties: false,
+                properties: {
+                  type: { const: 'FRAGILE_ON_TOP' },
+                  productCode: { type: 'string' },
+                },
+              },
+              {
+                type: 'object',
+                required: ['type', 'productCode', 'zone'],
+                additionalProperties: false,
+                properties: {
+                  type: { const: 'ZONE_RESTRICTION' },
+                  productCode: { type: 'string' },
+                  zone: {
+                    type: 'string',
+                    enum: Object.values(TruckZoneType),
+                    description: 'CONFINES the product TO this zone — the product may ONLY go here.',
+                  },
+                },
+              },
+              {
+                type: 'object',
+                required: ['type', 'productCode', 'maxTier'],
+                additionalProperties: false,
+                properties: {
+                  type: { const: 'TIER_RESTRICTION' },
+                  productCode: { type: 'string' },
+                  maxTier: { type: 'integer', minimum: 1, description: 'Max stacking tier; 1 = ground tier.' },
+                },
+              },
+              {
+                type: 'object',
+                required: ['type', 'family', 'zone'],
+                additionalProperties: false,
+                properties: {
+                  type: { const: 'FAMILY_PLACEMENT_BAN' },
+                  family: { type: 'string', enum: Object.values(ProductFamily) },
+                  zone: { type: 'string', enum: Object.values(TruckZoneType) },
+                },
+              },
+              {
+                type: 'object',
+                required: ['type', 'productCode', 'zone'],
+                additionalProperties: false,
+                properties: {
+                  type: { const: 'PRODUCT_ZONE_BAN' },
+                  productCode: { type: 'string' },
+                  zone: {
+                    type: 'string',
+                    enum: Object.values(TruckZoneType),
+                    description: 'BANS the product FROM this zone (opposite of ZONE_RESTRICTION); the product may go anywhere else.',
+                  },
+                },
+              },
+            ],
           },
         },
+        notes: { type: 'string', description: 'Optional free-text note.' },
       },
-      notes: { type: 'string' },
     },
   },
-} as const;
+};
 
+/**
+ * Typed error for the "this adapter's tool-use flow did not work at
+ * runtime" path — either the client explicitly reported no `tool_calls`
+ * (`DeepSeekNoToolCallError`), or the endpoint otherwise rejects `tools`.
+ * Signals to the operator/orchestrator: fall back to
+ * `DEEPSEEK_ADAPTER=json`.
+ */
 export class DeepSeekToolUseUnsupportedError extends Error {
-  constructor(method: 'planConstraints' | 'explainPlan' | 'reviseConstraints') {
-    super(
-      `DeepSeekToolUseAdapter.${method} is experimental and not yet supported: Huawei Cloud's DeepSeek tool/function-calling ` +
-        'support has not been verified against the real API. Use DeepSeekJsonAdapter (the default AgentPort) instead.',
-    );
+  constructor(message: string) {
+    super(message);
     this.name = 'DeepSeekToolUseUnsupportedError';
   }
 }
 
 export class DeepSeekToolUseAdapter implements AgentPort {
-  constructor(private readonly client: Pick<DeepSeekClient, 'chatCompletion'>) {}
+  constructor(private readonly client: Pick<DeepSeekClient, 'chatCompletion' | 'chatCompletionWithTools'>) {}
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature required by AgentPort; unconditional stub today, see class docstring.
-  async planConstraints(params: PlanConstraintsParams): Promise<ConstraintSet> {
-    throw new DeepSeekToolUseUnsupportedError('planConstraints');
+  async planConstraints({ rulesText, catalogContext }: PlanConstraintsParams): Promise<ConstraintSet> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: this.buildSystemPrompt(catalogContext) },
+      { role: 'user', content: rulesText },
+    ];
+
+    return this.callSetConstraintsTool(messages);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature required by AgentPort; unconditional stub today, see class docstring.
-  async explainPlan(params: ExplainPlanParams): Promise<string> {
-    throw new DeepSeekToolUseUnsupportedError('explainPlan');
+  async reviseConstraints({ rulesText, previousConstraints, problems, catalogContext }: ReviseConstraintsParams): Promise<ConstraintSet> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: this.buildRevisionSystemPrompt(catalogContext) },
+      { role: 'user', content: this.buildRevisionUserPrompt(rulesText, previousConstraints, problems) },
+    ];
+
+    return this.callSetConstraintsTool(messages);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature required by AgentPort; unconditional stub today, see class docstring.
-  async reviseConstraints(params: ReviseConstraintsParams): Promise<ConstraintSet> {
-    throw new DeepSeekToolUseUnsupportedError('reviseConstraints');
+  async explainPlan({ plan, constraints }: ExplainPlanParams): Promise<string> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: EXPLAIN_PLAN_SYSTEM_PROMPT },
+      { role: 'user', content: JSON.stringify({ plan, appliedRules: constraints.hardRules }) },
+    ];
+
+    return this.client.chatCompletion({ messages });
+  }
+
+  /** Forces `SET_CONSTRAINTS_TOOL` via `tool_choice`, then runs the arguments through the shared parse+validate gate. */
+  private async callSetConstraintsTool(messages: DeepSeekChatMessage[]): Promise<ConstraintSet> {
+    let argumentsJson: string;
+
+    try {
+      argumentsJson = await this.client.chatCompletionWithTools({
+        messages,
+        tools: [SET_CONSTRAINTS_TOOL],
+        toolChoice: { type: 'function', function: { name: SET_CONSTRAINTS_TOOL_NAME } },
+      });
+    } catch (error) {
+      if (error instanceof DeepSeekNoToolCallError) {
+        throw new DeepSeekToolUseUnsupportedError(
+          `DeepSeek did not return a "${SET_CONSTRAINTS_TOOL_NAME}" tool call — the endpoint may not support tool/function calling. Fall back to DEEPSEEK_ADAPTER=json. Original error: ${error.message}`,
+        );
+      }
+      throw error;
+    }
+
+    return parseAndValidateConstraintSet(argumentsJson);
+  }
+
+  private buildSystemPrompt(catalogContext: CatalogContext): string {
+    return [SYSTEM_PROMPT_HEADER, ...formatCatalogContextLines(catalogContext)].join('\n');
+  }
+
+  private buildRevisionSystemPrompt(catalogContext: CatalogContext): string {
+    return [SYSTEM_PROMPT_HEADER, REVISION_SYSTEM_PROMPT_ADDENDUM, ...formatCatalogContextLines(catalogContext)].join('\n');
+  }
+
+  private buildRevisionUserPrompt(rulesText: string, previousConstraints: ConstraintSet, problems: PlanProblems): string {
+    return JSON.stringify({
+      operatorRules: rulesText,
+      previousConstraints,
+      problems,
+    });
   }
 }

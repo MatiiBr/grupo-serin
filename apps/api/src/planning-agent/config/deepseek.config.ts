@@ -2,7 +2,7 @@ import { registerAs } from '@nestjs/config';
 
 /**
  * loading-agent-llm Phase 5.1 + resilience protocol + self-correcting-replan-loop
- * — `registerAs('deepseek', ...)` namespace. Reads
+ * + real tool-use adapter — `registerAs('deepseek', ...)` namespace. Reads
  * `DEEPSEEK_BASE_URL`/`DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL` from `process.env`.
  * `DeepSeekClient` (Phase 5.3) injects this by KEY via
  * `ConfigType<typeof deepseekConfig>`. Also reads the timeout/retry/queue
@@ -11,8 +11,16 @@ import { registerAs } from '@nestjs/config';
  * `maxPlanAttempts` bounds `PlanningAgentService`'s self-correcting re-plan
  * loop (1 initial `planConstraints` attempt + up to `maxPlanAttempts - 1`
  * `reviseConstraints` retries); a value below 1 is clamped to 1 (never fewer
- * than the initial attempt).
+ * than the initial attempt). `adapter` selects which `AgentPort`
+ * implementation `PlanningAgentModule` binds — `'json'` (default,
+ * `DeepSeekJsonAdapter`) is the SAFE path; `'tooluse'`
+ * (`DeepSeekToolUseAdapter`, real OpenAI-compatible function-calling) is
+ * OPT-IN because Huawei Cloud's DeepSeek tool-calling support is UNVERIFIED
+ * — any unrecognized value falls back to `'json'` rather than failing to
+ * boot.
  */
+
+export type DeepSeekAdapterKind = 'json' | 'tooluse';
 
 function parseIntEnv(value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
@@ -25,6 +33,10 @@ function parseMaxPlanAttempts(value: string | undefined): number {
   return Math.max(1, parsed);
 }
 
+function parseAdapterKind(value: string | undefined): DeepSeekAdapterKind {
+  return value === 'tooluse' ? 'tooluse' : 'json';
+}
+
 export const deepseekConfig = registerAs('deepseek', () => ({
   baseUrl: process.env.DEEPSEEK_BASE_URL,
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -34,4 +46,5 @@ export const deepseekConfig = registerAs('deepseek', () => ({
   maxConcurrency: parseIntEnv(process.env.DEEPSEEK_MAX_CONCURRENCY, 1),
   minIntervalMs: parseIntEnv(process.env.DEEPSEEK_MIN_INTERVAL_MS, 0),
   maxPlanAttempts: parseMaxPlanAttempts(process.env.DEEPSEEK_MAX_PLAN_ATTEMPTS),
+  adapter: parseAdapterKind(process.env.DEEPSEEK_ADAPTER),
 }));

@@ -1,9 +1,7 @@
 import 'reflect-metadata';
 import type { ConstraintSet } from '@camiones/shared';
-import { plainToInstance } from 'class-transformer';
-import { validate, ValidationError } from 'class-validator';
-import { ConstraintSetDto } from '../dto/constraint-set.dto';
 import type { AgentPort, CatalogContext, ExplainPlanParams, PlanConstraintsParams, PlanProblems, ReviseConstraintsParams } from '../ports/agent.port';
+import { ConstraintSetParseError, ConstraintSetValidationError, parseAndValidateConstraintSet } from './constraint-set-parser';
 import type { DeepSeekChatMessage, DeepSeekClient } from './deepseek.client';
 
 /**
@@ -12,32 +10,21 @@ import type { DeepSeekChatMessage, DeepSeekClient } from './deepseek.client';
  * matching `ConstraintSetDto`'s schema, injecting the operation's real
  * catalog (product codes/families/zones/destinations) so it references real
  * data instead of hallucinating. The raw response is parsed and validated
- * here; either failure mode (malformed JSON, schema-invalid JSON) surfaces
- * as a typed error — never a raw crash — so the caller (the Phase 7
- * validation gate) can react deterministically.
+ * via `parseAndValidateConstraintSet` (shared with `DeepSeekToolUseAdapter`
+ * — see `constraint-set-parser.ts`); either failure mode (malformed JSON,
+ * schema-invalid JSON) surfaces as a typed error — never a raw crash — so
+ * the caller (the Phase 7 validation gate) can react deterministically.
+ *
+ * `SYSTEM_PROMPT_HEADER`, `REVISION_SYSTEM_PROMPT_ADDENDUM`,
+ * `EXPLAIN_PLAN_SYSTEM_PROMPT`, and `formatCatalogContextLines` are exported
+ * so `DeepSeekToolUseAdapter` (real, tool-use — see its module docstring)
+ * mirrors the EXACT same rule-schema wording and catalog injection rather
+ * than a hand-copied, driftable duplicate.
  */
 
-export class ConstraintSetParseError extends Error {
-  constructor(
-    message: string,
-    readonly cause?: unknown,
-  ) {
-    super(message);
-    this.name = 'ConstraintSetParseError';
-  }
-}
+export { ConstraintSetParseError, ConstraintSetValidationError };
 
-export class ConstraintSetValidationError extends Error {
-  constructor(
-    message: string,
-    readonly errors: ValidationError[],
-  ) {
-    super(message);
-    this.name = 'ConstraintSetValidationError';
-  }
-}
-
-const SYSTEM_PROMPT_HEADER = [
+export const SYSTEM_PROMPT_HEADER = [
   'You are a logistics loading-constraint extraction agent.',
   'Read the operator instructions and extract ONLY hard placement rules.',
   'Respond with ONLY a single JSON object matching this exact schema — no prose, no markdown code fences, no explanation:',
@@ -59,6 +46,30 @@ const SYSTEM_PROMPT_HEADER = [
   'Every "productCode" and "family" you reference MUST come from the catalog below — never invent one.',
 ].join('\n');
 
+/**
+ * self-correcting-replan-loop — appended after `SYSTEM_PROMPT_HEADER` when
+ * revising a previous `ConstraintSet`. Exported so `DeepSeekToolUseAdapter`
+ * reuses the identical wording for its own revision system prompt.
+ */
+export const REVISION_SYSTEM_PROMPT_ADDENDUM = [
+  'You are now REVISING a ConstraintSet that produced a plan with problems (units that could not be placed, and/or critical alerts). You will be given the previous ConstraintSet and a summary of what went wrong.',
+  'Emit an ADJUSTED ConstraintSet in the exact same schema that still honors the operator\'s original intent but is expected to yield a MORE PLACEABLE plan — e.g. relax an over-restrictive zone ban, allow a family more zones, raise a maxTier, or drop a rule that is no longer needed. Do not simply repeat the previous ConstraintSet unchanged.',
+].join('\n');
+
+/** Reused verbatim by `DeepSeekToolUseAdapter.explainPlan` (no tool needed for this call). */
+export const EXPLAIN_PLAN_SYSTEM_PROMPT =
+  'Sos un asistente de logistica. Explicale el plan de carga a un operario de deposito en lenguaje claro y directo, en 2-4 parrafos cortos. Responde SIEMPRE en espanol.';
+
+/** Formats the real catalog into prompt lines — shared by both `AgentPort` implementations so neither hallucinates against a stale/hand-copied catalog format. */
+export function formatCatalogContextLines(catalogContext: CatalogContext): string[] {
+  return [
+    `Known product codes: ${catalogContext.productCodes.join(', ') || 'none'}.`,
+    `Known product families: ${catalogContext.families.join(', ') || 'none'}.`,
+    `Known truck zones: ${catalogContext.zones.join(', ') || 'none'}.`,
+    `Known destinations: ${catalogContext.destinations.join(', ') || 'none'}.`,
+  ];
+}
+
 export class DeepSeekJsonAdapter implements AgentPort {
   constructor(private readonly client: Pick<DeepSeekClient, 'chatCompletion'>) {}
 
@@ -69,7 +80,7 @@ export class DeepSeekJsonAdapter implements AgentPort {
     ];
 
     const content = await this.client.chatCompletion({ messages });
-    return this.parseAndValidate(content);
+    return parseAndValidateConstraintSet(content);
   }
 
   async reviseConstraints({ rulesText, previousConstraints, problems, catalogContext }: ReviseConstraintsParams): Promise<ConstraintSet> {
@@ -79,15 +90,12 @@ export class DeepSeekJsonAdapter implements AgentPort {
     ];
 
     const content = await this.client.chatCompletion({ messages });
-    return this.parseAndValidate(content);
+    return parseAndValidateConstraintSet(content);
   }
 
   async explainPlan({ plan, constraints }: ExplainPlanParams): Promise<string> {
     const messages: DeepSeekChatMessage[] = [
-      {
-        role: 'system',
-        content: 'Sos un asistente de logistica. Explicale el plan de carga a un operario de deposito en lenguaje claro y directo, en 2-4 parrafos cortos. Responde SIEMPRE en espanol.',
-      },
+      { role: 'system', content: EXPLAIN_PLAN_SYSTEM_PROMPT },
       { role: 'user', content: JSON.stringify({ plan, appliedRules: constraints.hardRules }) },
     ];
 
@@ -95,13 +103,7 @@ export class DeepSeekJsonAdapter implements AgentPort {
   }
 
   private buildSystemPrompt(catalogContext: CatalogContext): string {
-    return [
-      SYSTEM_PROMPT_HEADER,
-      `Known product codes: ${catalogContext.productCodes.join(', ') || 'none'}.`,
-      `Known product families: ${catalogContext.families.join(', ') || 'none'}.`,
-      `Known truck zones: ${catalogContext.zones.join(', ') || 'none'}.`,
-      `Known destinations: ${catalogContext.destinations.join(', ') || 'none'}.`,
-    ].join('\n');
+    return [SYSTEM_PROMPT_HEADER, ...formatCatalogContextLines(catalogContext)].join('\n');
   }
 
   /**
@@ -112,15 +114,7 @@ export class DeepSeekJsonAdapter implements AgentPort {
    * parse+validate path.
    */
   private buildRevisionSystemPrompt(catalogContext: CatalogContext): string {
-    return [
-      SYSTEM_PROMPT_HEADER,
-      'You are now REVISING a ConstraintSet that produced a plan with problems (units that could not be placed, and/or critical alerts). You will be given the previous ConstraintSet and a summary of what went wrong.',
-      'Emit an ADJUSTED ConstraintSet in the exact same schema that still honors the operator\'s original intent but is expected to yield a MORE PLACEABLE plan — e.g. relax an over-restrictive zone ban, allow a family more zones, raise a maxTier, or drop a rule that is no longer needed. Do not simply repeat the previous ConstraintSet unchanged.',
-      `Known product codes: ${catalogContext.productCodes.join(', ') || 'none'}.`,
-      `Known product families: ${catalogContext.families.join(', ') || 'none'}.`,
-      `Known truck zones: ${catalogContext.zones.join(', ') || 'none'}.`,
-      `Known destinations: ${catalogContext.destinations.join(', ') || 'none'}.`,
-    ].join('\n');
+    return [SYSTEM_PROMPT_HEADER, REVISION_SYSTEM_PROMPT_ADDENDUM, ...formatCatalogContextLines(catalogContext)].join('\n');
   }
 
   private buildRevisionUserPrompt(rulesText: string, previousConstraints: ConstraintSet, problems: PlanProblems): string {
@@ -129,24 +123,5 @@ export class DeepSeekJsonAdapter implements AgentPort {
       previousConstraints,
       problems,
     });
-  }
-
-  private async parseAndValidate(content: string): Promise<ConstraintSet> {
-    let parsed: unknown;
-
-    try {
-      parsed = JSON.parse(content);
-    } catch (error) {
-      throw new ConstraintSetParseError('DeepSeek response is not valid JSON.', error);
-    }
-
-    const instance = plainToInstance(ConstraintSetDto, parsed);
-    const errors = await validate(instance);
-
-    if (errors.length > 0) {
-      throw new ConstraintSetValidationError('DeepSeek response does not match the ConstraintSet schema.', errors);
-    }
-
-    return instance as unknown as ConstraintSet;
   }
 }

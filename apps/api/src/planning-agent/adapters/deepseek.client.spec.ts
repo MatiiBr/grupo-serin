@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   computeBackoffDelayMs,
   DeepSeekClient,
+  DeepSeekNoToolCallError,
   DeepSeekRateLimitError,
   DeepSeekRequestError,
   DeepSeekTimeoutError,
   parseRetryAfterMs,
+  type DeepSeekToolDefinition,
 } from './deepseek.client';
 
 /**
@@ -254,6 +256,124 @@ describe('DeepSeekClient (loading-agent-llm 5.2/5.3 + resilience protocol)', () 
       await Promise.all([p1, p2]);
 
       expect(order).toEqual(['start', 'end', 'start', 'end']);
+    });
+  });
+
+  describe('chatCompletionWithTools (real native tool-use, OpenAI-compatible)', () => {
+    const setConstraintsTool: DeepSeekToolDefinition = {
+      type: 'function',
+      function: {
+        name: 'set_constraints',
+        description: 'Return the extracted ConstraintSet.',
+        parameters: { type: 'object', required: ['version'], properties: { version: { const: 1 } } },
+      },
+    };
+
+    it('POSTs with tools + tool_choice in the body, and returns tool_calls[0].function.arguments', async () => {
+      const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+      mockFetch.mockResolvedValue(
+        jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'set_constraints', arguments: '{"version":1,"hardRules":[]}' } }],
+              },
+            },
+          ],
+        }),
+      );
+
+      const client = new DeepSeekClient(config);
+      const result = await client.chatCompletionWithTools({
+        messages: [{ role: 'user', content: 'plan it' }],
+        tools: [setConstraintsTool],
+        toolChoice: { type: 'function', function: { name: 'set_constraints' } },
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toBe('https://example.com/v1/chat/completions');
+
+      const body = JSON.parse(init.body as string);
+      expect(body).toMatchObject({
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: 'plan it' }],
+        tools: [setConstraintsTool],
+        tool_choice: { type: 'function', function: { name: 'set_constraints' } },
+      });
+
+      expect(result).toBe('{"version":1,"hardRules":[]}');
+    });
+
+    it('defaults tool_choice to "auto" when not provided', async () => {
+      const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+      mockFetch.mockResolvedValue(
+        jsonResponse({
+          choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'set_constraints', arguments: '{}' } }] } }],
+        }),
+      );
+
+      const client = new DeepSeekClient(config);
+      await client.chatCompletionWithTools({ messages: [{ role: 'user', content: 'plan it' }], tools: [setConstraintsTool] });
+
+      const [, init] = mockFetch.mock.calls[0];
+      const body = JSON.parse(init.body as string);
+      expect(body.tool_choice).toBe('auto');
+    });
+
+    it('throws a typed DeepSeekNoToolCallError when the response has no tool_calls', async () => {
+      const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+      mockFetch.mockResolvedValue(jsonResponse({ choices: [{ message: { role: 'assistant', content: 'just prose, no tool call' } }] }));
+
+      const client = new DeepSeekClient(config);
+
+      await expect(
+        client.chatCompletionWithTools({ messages: [{ role: 'user', content: 'plan it' }], tools: [setConstraintsTool] }),
+      ).rejects.toBeInstanceOf(DeepSeekNoToolCallError);
+    });
+
+    it('throws DeepSeekNoToolCallError when tool_calls is an empty array', async () => {
+      const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+      mockFetch.mockResolvedValue(jsonResponse({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }] }));
+
+      const client = new DeepSeekClient(config);
+
+      await expect(
+        client.chatCompletionWithTools({ messages: [{ role: 'user', content: 'plan it' }], tools: [setConstraintsTool] }),
+      ).rejects.toBeInstanceOf(DeepSeekNoToolCallError);
+    });
+
+    it('reuses the SAME resilience path: a 429-then-200 retry still succeeds via chatCompletionWithTools', async () => {
+      vi.useFakeTimers();
+      const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+      mockFetch
+        .mockResolvedValueOnce(jsonResponse({ error: 'rate limited' }, { ok: false, status: 429, headers: { 'retry-after': '2' } }))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'set_constraints', arguments: '{"version":1,"hardRules":[]}' } }] } }],
+          }),
+        );
+
+      const client = new DeepSeekClient({ ...config, maxRetries: 3 });
+      const promise = client.chatCompletionWithTools({ messages: [{ role: 'user', content: 'plan it' }], tools: [setConstraintsTool] });
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(promise).resolves.toBe('{"version":1,"hardRules":[]}');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does NOT retry when the response has no tool_calls — that is a semantic failure, not a transient one', async () => {
+      const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+      mockFetch.mockResolvedValue(jsonResponse({ choices: [{ message: { role: 'assistant', content: 'prose only' } }] }));
+
+      const client = new DeepSeekClient({ ...config, maxRetries: 3 });
+
+      await expect(
+        client.chatCompletionWithTools({ messages: [{ role: 'user', content: 'plan it' }], tools: [setConstraintsTool] }),
+      ).rejects.toBeInstanceOf(DeepSeekNoToolCallError);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 });

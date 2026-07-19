@@ -42,8 +42,33 @@ export interface DeepSeekChatCompletionParams {
   messages: DeepSeekChatMessage[];
 }
 
+/** OpenAI-compatible function-tool definition for `tools: [...]`. */
+export interface DeepSeekToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export type DeepSeekToolChoice = 'auto' | 'required' | 'none' | { type: 'function'; function: { name: string } };
+
+export interface DeepSeekChatCompletionWithToolsParams {
+  messages: DeepSeekChatMessage[];
+  tools: DeepSeekToolDefinition[];
+  /** Defaults to `'auto'` when omitted. Pass `{ type: 'function', function: { name } }` to FORCE a specific tool call. */
+  toolChoice?: DeepSeekToolChoice;
+}
+
+interface DeepSeekResponseToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
 interface DeepSeekChatCompletionResponse {
-  choices: Array<{ message: { role: string; content: string } }>;
+  choices: Array<{ message: { role: string; content: string | null; tool_calls?: DeepSeekResponseToolCall[] } }>;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -140,6 +165,21 @@ export class DeepSeekRequestError extends DeepSeekError {
   }
 }
 
+/**
+ * Thrown by `chatCompletionWithTools` when a (successful, 2xx) response
+ * carries no `tool_calls` — a SEMANTIC failure (the model chose not to call
+ * the forced tool, or the endpoint silently ignored `tools`/`tool_choice`),
+ * not a transient network/HTTP condition. Deliberately NOT retried (see
+ * `isRetryable`): retrying an identical request will not change whether the
+ * model decides to call a tool.
+ */
+export class DeepSeekNoToolCallError extends Error {
+  constructor(message = 'DeepSeek response did not include any tool_calls.') {
+    super(message);
+    this.name = 'DeepSeekNoToolCallError';
+  }
+}
+
 function isRetryable(error: DeepSeekError): boolean {
   if (error instanceof DeepSeekTimeoutError) return true;
   if (error instanceof DeepSeekRateLimitError) return true;
@@ -184,16 +224,43 @@ export class DeepSeekClient {
   }
 
   async chatCompletion(params: DeepSeekChatCompletionParams): Promise<string> {
-    return this.queue.enqueue(() => this.executeWithRetry(params));
+    return this.queue.enqueue(() =>
+      this.executeWithRetry(
+        { model: this.config.model, messages: params.messages },
+        (payload) => payload.choices[0].message.content ?? '',
+      ),
+    );
   }
 
-  private async executeWithRetry(params: DeepSeekChatCompletionParams): Promise<string> {
+  /**
+   * OpenAI-compatible tool/function-calling completion. Reuses the EXACT
+   * same queue/timeout/retry path as `chatCompletion` (`executeWithRetry` ->
+   * `executeOnce`) — only the request body and result extraction differ.
+   * Returns the FIRST `tool_calls[0].function.arguments` string (the raw,
+   * not-yet-parsed JSON the model produced for the forced tool call). Throws
+   * `DeepSeekNoToolCallError` if the response carries no `tool_calls`.
+   */
+  async chatCompletionWithTools(params: DeepSeekChatCompletionWithToolsParams): Promise<string> {
+    return this.queue.enqueue(() =>
+      this.executeWithRetry(
+        {
+          model: this.config.model,
+          messages: params.messages,
+          tools: params.tools,
+          tool_choice: params.toolChoice ?? 'auto',
+        },
+        extractToolCallArguments,
+      ),
+    );
+  }
+
+  private async executeWithRetry<T>(body: Record<string, unknown>, extract: (payload: DeepSeekChatCompletionResponse) => T): Promise<T> {
     const totalAttempts = this.maxRetries + 1;
     let lastError: DeepSeekError | undefined;
 
     for (let attempt = 1; attempt <= totalAttempts; attempt++) {
       try {
-        return await this.executeOnce(params);
+        return await this.executeOnce(body, extract);
       } catch (error) {
         const typedError = error as DeepSeekError;
         lastError = typedError;
@@ -211,7 +278,7 @@ export class DeepSeekClient {
     throw lastError ?? new DeepSeekRequestError('DeepSeek request failed: exhausted retries with no captured error.');
   }
 
-  private async executeOnce(params: DeepSeekChatCompletionParams): Promise<string> {
+  private async executeOnce<T>(body: Record<string, unknown>, extract: (payload: DeepSeekChatCompletionResponse) => T): Promise<T> {
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -224,7 +291,7 @@ export class DeepSeekClient {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.config.apiKey}`,
         },
-        body: JSON.stringify({ model: this.config.model, messages: params.messages }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
     } catch (error) {
@@ -237,17 +304,33 @@ export class DeepSeekClient {
     }
 
     if (!response.ok) {
-      const body = await response.json().catch(() => undefined);
+      const responseBody = await response.json().catch(() => undefined);
       const retryAfterMs = parseRetryAfterMs(getRetryAfterHeader(response));
 
       if (response.status === 429) {
-        throw new DeepSeekRateLimitError('DeepSeek request rate-limited (429).', retryAfterMs, body);
+        throw new DeepSeekRateLimitError('DeepSeek request rate-limited (429).', retryAfterMs, responseBody);
       }
 
-      throw new DeepSeekRequestError(`DeepSeek request failed with status ${response.status}.`, body, response.status, retryAfterMs);
+      throw new DeepSeekRequestError(`DeepSeek request failed with status ${response.status}.`, responseBody, response.status, retryAfterMs);
     }
 
     const payload = (await response.json()) as DeepSeekChatCompletionResponse;
-    return payload.choices[0].message.content;
+    return extract(payload);
   }
+}
+
+/**
+ * Extracts the first tool call's raw `arguments` JSON string from a
+ * tool-enabled completion response. Throws `DeepSeekNoToolCallError` when
+ * `tool_calls` is missing or empty — a non-retryable, semantic failure (see
+ * the error's docstring).
+ */
+function extractToolCallArguments(payload: DeepSeekChatCompletionResponse): string {
+  const toolCalls = payload.choices[0].message.tool_calls;
+
+  if (!toolCalls || toolCalls.length === 0) {
+    throw new DeepSeekNoToolCallError();
+  }
+
+  return toolCalls[0].function.arguments;
 }
