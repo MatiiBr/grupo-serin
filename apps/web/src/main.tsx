@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient
 import { PlanStatus, ProductFamily } from '@camiones/shared';
 import { Canvas } from '@react-three/fiber';
 import { Edges, OrbitControls, Text } from '@react-three/drei';
-import { StrictMode, useEffect, useMemo, useState } from 'react';
+import * as THREE from 'three';
+import { type ReactElement, StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { destinationsApi } from './api/destinations';
 import { LifecyclePage, OrdersPage, DispatchPage } from './features/lifecycle/LifecyclePage';
@@ -620,15 +621,156 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
   const y = (item.zMm + item.heightMm / 2) * scale;
   const z = (item.yMm + item.widthMm / 2 - truckWidthMm / 2) * scale;
   const color = alertStatus === 'critical' ? '#ff1f1f' : alertStatus === 'warning' ? '#ffbf3f' : selected ? '#ffe08a' : item.manuallyAdjusted ? '#41d6c3' : familyColor(item.productFamily);
-  const edgeColor = alertStatus === 'critical' ? '#ffffff' : item.locked ? '#ffffff' : selected ? '#ffffff' : '#2c1b0b';
+  const edgeColor = alertStatus === 'critical' ? '#ffffff' : item.locked ? '#ffffff' : selected ? '#ffffff' : '#20262e';
+  // Steel-mill cargo: each family gets a recognizable shape.
+  const isPackage = item.productFamily === ProductFamily.GENERIC_PACKAGE;
+  const roughness = isPackage ? 0.82 : 0.3;
+  const metalness = isPackage ? 0.12 : 0.9;
+  const emissive = alertStatus === 'critical' ? '#7a0000' : '#000000';
+  const mat = <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />;
+
+  let cargo: ReactElement;
+  if (item.productFamily === ProductFamily.COIL) {
+    // wire coil standing up (eye to the sky), with a hole
+    const outerR = Math.min(length, width) / 2;
+    const tube = Math.max(0.05, outerR * 0.4);
+    const major = Math.max(0.06, outerR - tube);
+    cargo = (
+      <mesh castShadow receiveShadow rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[major, tube, 18, 34]} />
+        {mat}
+      </mesh>
+    );
+  } else if (item.productFamily === ProductFamily.TUBE) {
+    // a bundle of pipes lying along the truck length
+    const cols = 4;
+    const rows = 2;
+    const pr = Math.max(0.03, 0.92 * Math.min(width / cols, height / rows) / 2);
+    const pipes = [];
+    for (let c = 0; c < cols; c += 1) {
+      for (let r = 0; r < rows; r += 1) {
+        pipes.push(
+          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * (height / rows), -width / 2 + (c + 0.5) * (width / cols)]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[pr, pr, length, 14]} />
+            <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
+          </mesh>,
+        );
+      }
+    }
+    cargo = <group>{pipes}</group>;
+  } else if (item.productFamily === ProductFamily.SHEET) {
+    // a stack of thin steel plates
+    const layers = 4;
+    const gap = height / layers;
+    const plates = [];
+    for (let i = 0; i < layers; i += 1) {
+      plates.push(
+        <mesh key={i} castShadow receiveShadow position={[0, -height / 2 + gap * (i + 0.5), 0]}>
+          <boxGeometry args={[length, gap * 0.68, width]} />
+          <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
+          <Edges color={edgeColor} />
+        </mesh>,
+      );
+    }
+    cargo = <group>{plates}</group>;
+  } else if (item.productFamily === ProductFamily.SQUARE_TUBE) {
+    // bundle of square-section tubes
+    const cols = 4;
+    const rows = 2;
+    const sw = 0.88 * (width / cols);
+    const sh = 0.88 * (height / rows);
+    const tubes = [];
+    for (let c = 0; c < cols; c += 1) {
+      for (let r = 0; r < rows; r += 1) {
+        tubes.push(
+          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * (height / rows), -width / 2 + (c + 0.5) * (width / cols)]}>
+            <boxGeometry args={[length, sh, sw]} />
+            <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
+            <Edges color={edgeColor} />
+          </mesh>,
+        );
+      }
+    }
+    cargo = <group>{tubes}</group>;
+  } else if (item.productFamily === ProductFamily.REBAR) {
+    // sagging bundle of construction rebar (bows under its own weight)
+    const cols = 5;
+    const rows = 2;
+    const rr = Math.max(0.02, 0.78 * Math.min(width / cols, height / rows) / 2);
+    const rods = [];
+    for (let c = 0; c < cols; c += 1) {
+      for (let r = 0; r < rows; r += 1) {
+        const pz = -width / 2 + (c + 0.5) * (width / cols);
+        const py = -height / 2 + (r + 0.5) * (height / rows);
+        const sag = Math.min(height * 0.6, 0.14) * (0.6 + 0.4 * (((c + r) % 3) / 2));
+        const curve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-length / 2, py, pz),
+          new THREE.Vector3(0, py - sag, pz),
+          new THREE.Vector3(length / 2, py, pz),
+        ]);
+        rods.push(
+          <mesh key={`${c}-${r}`} castShadow receiveShadow>
+            <tubeGeometry args={[curve, 18, rr, 7, false]} />
+            <meshStandardMaterial color={color} emissive={emissive} roughness={0.55} metalness={0.7} />
+          </mesh>,
+        );
+      }
+    }
+    cargo = <group>{rods}</group>;
+  } else if (item.productFamily === ProductFamily.ANGLE) {
+    // L-shaped angle profile
+    const t = Math.max(0.02, Math.min(width, height) * 0.24);
+    cargo = (
+      <group>
+        <mesh castShadow receiveShadow position={[0, -height / 2 + t / 2, 0]}>
+          <boxGeometry args={[length, t, width]} />
+          <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
+          <Edges color={edgeColor} />
+        </mesh>
+        <mesh castShadow receiveShadow position={[0, 0, -width / 2 + t / 2]}>
+          <boxGeometry args={[length, height, t]} />
+          <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
+          <Edges color={edgeColor} />
+        </mesh>
+      </group>
+    );
+  } else if (item.productFamily === ProductFamily.MESH) {
+    // welded mesh panel: a grid of thin bars
+    const bar = Math.max(0.014, Math.min(length, width) * 0.014);
+    const nx = 6;
+    const nz = 4;
+    const grid = [];
+    for (let i = 0; i <= nx; i += 1) {
+      grid.push(
+        <mesh key={`x${i}`} castShadow receiveShadow position={[-length / 2 + (i / nx) * length, 0, 0]}>
+          <boxGeometry args={[bar, bar, width]} />
+          <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+        </mesh>,
+      );
+    }
+    for (let j = 0; j <= nz; j += 1) {
+      grid.push(
+        <mesh key={`z${j}`} castShadow receiveShadow position={[0, 0, -width / 2 + (j / nz) * width]}>
+          <boxGeometry args={[length, bar, bar]} />
+          <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+        </mesh>,
+      );
+    }
+    cargo = <group>{grid}</group>;
+  } else {
+    // profiles, bars, packages: metallic beam / slab
+    cargo = (
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[length, height, width]} />
+        {mat}
+        <Edges color={edgeColor} />
+      </mesh>
+    );
+  }
 
   return (
     <group position={[x, y, z]} onClick={(event) => { event.stopPropagation(); onSelect(item.id); }}>
-      <mesh castShadow receiveShadow>
-        <boxGeometry args={[length, height, width]} />
-        <meshStandardMaterial color={color} emissive={alertStatus === 'critical' ? '#7a0000' : '#000000'} roughness={0.58} metalness={0.28} />
-        <Edges color={edgeColor} />
-      </mesh>
+      {cargo}
       {alertStatus === 'critical' ? <Text position={[0, height / 2 + 0.42, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.24} color="#ffffff">INVALIDO</Text> : null}
       {alertStatus === 'warning' ? <Text position={[0, height / 2 + 0.32, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.2} color="#2b1700">WARNING</Text> : null}
       {sequence ? <Text position={[0, height / 2 + 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={Math.max(0.18, Math.min(length, width) / 4)} color="#19110a">#{sequence}</Text> : null}
@@ -724,12 +866,16 @@ function truckDimensions(items: PlacedItem[], truck: Truck | null) {
 
 function familyColor(family: ProductFamily) {
   const colors: Record<ProductFamily, string> = {
-    [ProductFamily.COIL]: '#8fb9a8',
-    [ProductFamily.SHEET]: '#d95f2f',
-    [ProductFamily.PROFILE]: '#ffb45f',
-    [ProductFamily.TUBE]: '#8aa8d8',
-    [ProductFamily.BAR]: '#d7c47a',
-    [ProductFamily.GENERIC_PACKAGE]: '#c9b99f',
+    [ProductFamily.COIL]: '#cbab63',
+    [ProductFamily.SHEET]: '#a7bcd4',
+    [ProductFamily.PROFILE]: '#828a97',
+    [ProductFamily.TUBE]: '#98b6d6',
+    [ProductFamily.BAR]: '#b7c0cb',
+    [ProductFamily.REBAR]: '#a5764f',
+    [ProductFamily.SQUARE_TUBE]: '#8f9aa6',
+    [ProductFamily.ANGLE]: '#a6adb7',
+    [ProductFamily.MESH]: '#c3cad2',
+    [ProductFamily.GENERIC_PACKAGE]: '#b5894e',
   };
   return colors[family] ?? '#ffb45f';
 }
