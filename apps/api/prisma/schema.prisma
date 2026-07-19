@@ -33,6 +33,10 @@ enum ProductFamily {
   PROFILE
   TUBE
   BAR
+  REBAR
+  SQUARE_TUBE
+  ANGLE
+  MESH
   GENERIC_PACKAGE
 }
 

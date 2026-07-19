@@ -24,6 +24,10 @@ export enum ProductFamily {
   PROFILE = 'PROFILE',
   TUBE = 'TUBE',
   BAR = 'BAR',
+  REBAR = 'REBAR',
+  SQUARE_TUBE = 'SQUARE_TUBE',
+  ANGLE = 'ANGLE',
+  MESH = 'MESH',
   GENERIC_PACKAGE = 'GENERIC_PACKAGE',
 }
 
