@@ -18,6 +18,7 @@ const ENV_KEYS = [
   'DEEPSEEK_MAX_RETRIES',
   'DEEPSEEK_MAX_CONCURRENCY',
   'DEEPSEEK_MIN_INTERVAL_MS',
+  'DEEPSEEK_MAX_PLAN_ATTEMPTS',
 ] as const;
 
 describe('deepseekConfig (loading-agent-llm 5.1)', () => {
@@ -96,5 +97,45 @@ describe('deepseekConfig (loading-agent-llm 5.1)', () => {
     const config = deepseekConfig();
 
     expect(config.timeoutMs).toBe(60000);
+  });
+
+  it('self-correcting-replan-loop — reads maxPlanAttempts from DEEPSEEK_MAX_PLAN_ATTEMPTS', () => {
+    process.env.DEEPSEEK_MAX_PLAN_ATTEMPTS = '5';
+
+    const config = deepseekConfig();
+
+    expect(config.maxPlanAttempts).toBe(5);
+  });
+
+  it('self-correcting-replan-loop — defaults maxPlanAttempts to 3 when unset', () => {
+    delete process.env.DEEPSEEK_MAX_PLAN_ATTEMPTS;
+
+    const config = deepseekConfig();
+
+    expect(config.maxPlanAttempts).toBe(3);
+  });
+
+  it('self-correcting-replan-loop — clamps maxPlanAttempts to a minimum of 1', () => {
+    process.env.DEEPSEEK_MAX_PLAN_ATTEMPTS = '0';
+
+    const config = deepseekConfig();
+
+    expect(config.maxPlanAttempts).toBe(1);
+  });
+
+  it('self-correcting-replan-loop — clamps a negative maxPlanAttempts to 1', () => {
+    process.env.DEEPSEEK_MAX_PLAN_ATTEMPTS = '-2';
+
+    const config = deepseekConfig();
+
+    expect(config.maxPlanAttempts).toBe(1);
+  });
+
+  it('self-correcting-replan-loop — falls back to default 3 when maxPlanAttempts is not a finite number', () => {
+    process.env.DEEPSEEK_MAX_PLAN_ATTEMPTS = 'not-a-number';
+
+    const config = deepseekConfig();
+
+    expect(config.maxPlanAttempts).toBe(3);
   });
 });

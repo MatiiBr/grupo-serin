@@ -66,4 +66,16 @@ describe('DeepSeekToolUseAdapter — experimental, unsupported until verified', 
     await expect(adapter.explainPlan({ plan, constraints })).rejects.toBeInstanceOf(DeepSeekToolUseUnsupportedError);
     expect(client.chatCompletion).not.toHaveBeenCalled();
   });
+
+  it('reviseConstraints rejects with DeepSeekToolUseUnsupportedError and never calls the client (self-correcting-replan-loop)', async () => {
+    const client = mockClient();
+    const adapter = new DeepSeekToolUseAdapter(client);
+    const previousConstraints = { version: 1 as const, hardRules: [] };
+    const problems = { unplaced: [], criticalAlerts: [] };
+
+    await expect(
+      adapter.reviseConstraints({ rulesText: 'Do not stack P-100.', previousConstraints, problems, catalogContext }),
+    ).rejects.toBeInstanceOf(DeepSeekToolUseUnsupportedError);
+    expect(client.chatCompletion).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,5 @@
 import type { ConstraintSet } from '@camiones/shared';
-import type { AgentPort, ExplainPlanParams, PlanConstraintsParams } from '../ports/agent.port';
+import type { AgentPort, ExplainPlanParams, PlanConstraintsParams, ReviseConstraintsParams } from '../ports/agent.port';
 import type { DeepSeekClient } from './deepseek.client';
 
 /**
@@ -44,7 +44,7 @@ export const CONSTRAINT_SET_TOOL_SCHEMA = {
 } as const;
 
 export class DeepSeekToolUseUnsupportedError extends Error {
-  constructor(method: 'planConstraints' | 'explainPlan') {
+  constructor(method: 'planConstraints' | 'explainPlan' | 'reviseConstraints') {
     super(
       `DeepSeekToolUseAdapter.${method} is experimental and not yet supported: Huawei Cloud's DeepSeek tool/function-calling ` +
         'support has not been verified against the real API. Use DeepSeekJsonAdapter (the default AgentPort) instead.',
@@ -64,5 +64,10 @@ export class DeepSeekToolUseAdapter implements AgentPort {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature required by AgentPort; unconditional stub today, see class docstring.
   async explainPlan(params: ExplainPlanParams): Promise<string> {
     throw new DeepSeekToolUseUnsupportedError('explainPlan');
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature required by AgentPort; unconditional stub today, see class docstring.
+  async reviseConstraints(params: ReviseConstraintsParams): Promise<ConstraintSet> {
+    throw new DeepSeekToolUseUnsupportedError('reviseConstraints');
   }
 }

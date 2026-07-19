@@ -134,6 +134,66 @@ describe('DeepSeekJsonAdapter.planConstraints — invalid responses (typed error
   });
 });
 
+describe('DeepSeekJsonAdapter.reviseConstraints (self-correcting-replan-loop)', () => {
+  const previousConstraints = {
+    version: 1 as const,
+    hardRules: [{ type: 'PRODUCT_ZONE_BAN' as const, productCode: 'P-100', zone: 'CENTER' as never }],
+  };
+  const problems = {
+    unplaced: [{ productCode: 'P-100', reason: 'No floor space available in the target zone or fallback zones.' }],
+    criticalAlerts: [{ type: 'UNPLACED_ITEM', message: 'Product P-100 unit 1 was not placed.' }],
+  };
+
+  it('resolves a well-formed JSON response into a valid (adjusted) ConstraintSet', async () => {
+    const golden = { version: 1, hardRules: [{ type: 'STACKING_PROHIBITION', productCode: 'P-100' }] };
+    const client = mockClient(JSON.stringify(golden));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    const result = await adapter.reviseConstraints({ rulesText: 'Do not stack P-100.', previousConstraints, problems, catalogContext });
+
+    expect(result).toEqual(golden);
+    expect(client.chatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the operator rulesText, the previous ConstraintSet, and the problems summary to the model', async () => {
+    const client = mockClient(JSON.stringify({ version: 1, hardRules: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await adapter.reviseConstraints({ rulesText: 'Do not stack P-100.', previousConstraints, problems, catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const userMessage = params.messages.find((message: { role: string }) => message.role === 'user');
+    const payload = JSON.parse(userMessage.content);
+
+    expect(payload.operatorRules).toBe('Do not stack P-100.');
+    expect(payload.previousConstraints).toEqual(previousConstraints);
+    expect(payload.problems).toEqual(problems);
+
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    expect(systemMessage.content).toContain('REVISING');
+    expect(systemMessage.content).toContain('P-100');
+  });
+
+  it('rejects with ConstraintSetParseError when the response is not valid JSON', async () => {
+    const client = mockClient('this is not json {');
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await expect(adapter.reviseConstraints({ rulesText: 'r', previousConstraints, problems, catalogContext })).rejects.toBeInstanceOf(
+      ConstraintSetParseError,
+    );
+  });
+
+  it('rejects with ConstraintSetValidationError when the JSON is well-formed but fails the ConstraintSet schema', async () => {
+    const malformed = { version: 1, hardRules: [{ type: 'ZONE_RESTRICTION', productCode: 'P-200' }] }; // missing required "zone"
+    const client = mockClient(JSON.stringify(malformed));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await expect(adapter.reviseConstraints({ rulesText: 'r', previousConstraints, problems, catalogContext })).rejects.toBeInstanceOf(
+      ConstraintSetValidationError,
+    );
+  });
+});
+
 describe('DeepSeekJsonAdapter.explainPlan', () => {
   it('returns the client response content as the explanation', async () => {
     const client = mockClient('The plan places P-100 in CENTER and confines P-200 to DOOR_SIDE.');

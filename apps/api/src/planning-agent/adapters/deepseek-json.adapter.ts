@@ -3,7 +3,7 @@ import type { ConstraintSet } from '@camiones/shared';
 import { plainToInstance } from 'class-transformer';
 import { validate, ValidationError } from 'class-validator';
 import { ConstraintSetDto } from '../dto/constraint-set.dto';
-import type { AgentPort, CatalogContext, ExplainPlanParams, PlanConstraintsParams } from '../ports/agent.port';
+import type { AgentPort, CatalogContext, ExplainPlanParams, PlanConstraintsParams, PlanProblems, ReviseConstraintsParams } from '../ports/agent.port';
 import type { DeepSeekChatMessage, DeepSeekClient } from './deepseek.client';
 
 /**
@@ -72,6 +72,16 @@ export class DeepSeekJsonAdapter implements AgentPort {
     return this.parseAndValidate(content);
   }
 
+  async reviseConstraints({ rulesText, previousConstraints, problems, catalogContext }: ReviseConstraintsParams): Promise<ConstraintSet> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: this.buildRevisionSystemPrompt(catalogContext) },
+      { role: 'user', content: this.buildRevisionUserPrompt(rulesText, previousConstraints, problems) },
+    ];
+
+    const content = await this.client.chatCompletion({ messages });
+    return this.parseAndValidate(content);
+  }
+
   async explainPlan({ plan, constraints }: ExplainPlanParams): Promise<string> {
     const messages: DeepSeekChatMessage[] = [
       {
@@ -92,6 +102,33 @@ export class DeepSeekJsonAdapter implements AgentPort {
       `Known truck zones: ${catalogContext.zones.join(', ') || 'none'}.`,
       `Known destinations: ${catalogContext.destinations.join(', ') || 'none'}.`,
     ].join('\n');
+  }
+
+  /**
+   * self-correcting-replan-loop — reuses `SYSTEM_PROMPT_HEADER` (same schema,
+   * same field-name pitfalls) plus the catalog, so the revised
+   * `ConstraintSet` the model emits is structurally identical to a fresh
+   * `planConstraints` response and can go through the exact same
+   * parse+validate path.
+   */
+  private buildRevisionSystemPrompt(catalogContext: CatalogContext): string {
+    return [
+      SYSTEM_PROMPT_HEADER,
+      'You are now REVISING a ConstraintSet that produced a plan with problems (units that could not be placed, and/or critical alerts). You will be given the previous ConstraintSet and a summary of what went wrong.',
+      'Emit an ADJUSTED ConstraintSet in the exact same schema that still honors the operator\'s original intent but is expected to yield a MORE PLACEABLE plan — e.g. relax an over-restrictive zone ban, allow a family more zones, raise a maxTier, or drop a rule that is no longer needed. Do not simply repeat the previous ConstraintSet unchanged.',
+      `Known product codes: ${catalogContext.productCodes.join(', ') || 'none'}.`,
+      `Known product families: ${catalogContext.families.join(', ') || 'none'}.`,
+      `Known truck zones: ${catalogContext.zones.join(', ') || 'none'}.`,
+      `Known destinations: ${catalogContext.destinations.join(', ') || 'none'}.`,
+    ].join('\n');
+  }
+
+  private buildRevisionUserPrompt(rulesText: string, previousConstraints: ConstraintSet, problems: PlanProblems): string {
+    return JSON.stringify({
+      operatorRules: rulesText,
+      previousConstraints,
+      problems,
+    });
   }
 
   private async parseAndValidate(content: string): Promise<ConstraintSet> {

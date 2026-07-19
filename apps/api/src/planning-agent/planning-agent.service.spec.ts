@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import type { ConstraintSet } from '@camiones/shared';
+import { TruckZoneType as SharedTruckZoneType } from '@camiones/shared';
 import { LoadingMethod, ProductFamily, TruckZoneType } from '@prisma/client';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -88,14 +89,65 @@ function mockAgentPort(overrides: Partial<AgentPort> = {}): AgentPort {
   return {
     planConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
     explainPlan: vi.fn().mockResolvedValue('The plan places every unit within capacity.'),
+    reviseConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
     ...overrides,
   };
 }
 
-function createService(operation: unknown, agentPort: AgentPort) {
+function createService(operation: unknown, agentPort: AgentPort, config?: { maxPlanAttempts?: number }) {
   const prisma = { loadOperation: { findUnique: vi.fn().mockResolvedValue(operation) }, loadingPlan: { create: vi.fn(), update: vi.fn() } };
-  const service = new PlanningAgentService(prisma as never, agentPort);
+  const service = new PlanningAgentService(prisma as never, agentPort, config as never);
   return { service, prisma };
+}
+
+/**
+ * self-correcting-replan-loop — a single-product operation whose truck has
+ * exactly one zone (DOOR_SIDE) large enough to fit the product: CABIN_SIDE
+ * and CENTER are only 100mm long, far too narrow for a 500mm-long product.
+ * Mirrors the geometrically-only-one-zone-fits pattern from
+ * `constraint-application.spec.ts`'s PRODUCT_ZONE_BAN regression test — used
+ * here to make an over-restrictive ConstraintSet (banning the one zone that
+ * fits) deterministically leave the unit unplaced with the REAL solver.
+ */
+function createNarrowZoneOperation() {
+  return {
+    id: 'operation-1',
+    truck: {
+      id: 'truck-1',
+      loadingMethod: LoadingMethod.REAR,
+      maxPayloadKg: 24_000,
+      lengthMm: 9000,
+      widthMm: 2000,
+      heightMm: 2500,
+      zones: [
+        { id: 'zone-cabin', type: TruckZoneType.CABIN_SIDE, maxWeightKg: null, startXMm: 0, endXMm: 100, startYMm: 0, endYMm: 2000 },
+        { id: 'zone-center', type: TruckZoneType.CENTER, maxWeightKg: null, startXMm: 100, endXMm: 200, startYMm: 0, endYMm: 2000 },
+        { id: 'zone-door', type: TruckZoneType.DOOR_SIDE, maxWeightKg: null, startXMm: 200, endXMm: 9000, startYMm: 0, endYMm: 2000 },
+      ],
+      tiers: [],
+    },
+    destinations: [{ id: 'destination-1', name: 'Only stop', unloadingOrder: 1 }],
+    products: [
+      {
+        id: 'product-1',
+        code: 'P-100',
+        family: ProductFamily.COIL,
+        description: null,
+        destinationId: 'destination-1',
+        quantity: 1,
+        weightKg: 500,
+        lengthMm: 500,
+        widthMm: 500,
+        heightMm: 400,
+        stackable: true,
+        rotationAllowed: true,
+        fragile: false,
+        maxStackLoadKg: null,
+        destination: { id: 'destination-1', name: 'Only stop', unloadingOrder: 1 },
+      },
+    ],
+    plans: [],
+  } as never;
 }
 
 describe('PlanningAgentService.plan — orchestration flow (8.2, 8.3)', () => {
@@ -217,5 +269,146 @@ describe('PlanningAgentService.plan — validation gate integration (7.1, 7.2, 7
     expect(hallucinatedResult.droppedRules).toHaveLength(2);
     // Solver ran on the UNMODIFIED input — same result as a truly empty ConstraintSet.
     expect(hallucinatedResult.plan).toEqual(baselineResult.plan);
+  });
+});
+
+describe('PlanningAgentService.plan — self-correcting re-planning loop', () => {
+  it('happy path: a clean plan on the first attempt never calls reviseConstraints; attempts === 1', async () => {
+    const operation = createOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'STACKING_PROHIBITION', productCode: 'P-100' }],
+      } satisfies ConstraintSet),
+    });
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'Do not stack P-100.');
+
+    expect(result.plan.unplacedItems).toEqual([]);
+    expect(result.attempts).toBe(1);
+    expect(result.resolutionLog).toEqual([{ attempt: 1, unplaced: 0, critical: 0, revised: false }]);
+    expect(agentPort.reviseConstraints).not.toHaveBeenCalled();
+    expect(agentPort.explainPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it('self-correction: an over-restrictive first attempt leaves a unit unplaced; a relaxed revision places it; attempts === 2', async () => {
+    const operation = createNarrowZoneOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+      } satisfies ConstraintSet),
+      reviseConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
+    });
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'Perfiles no pueden ir del lado de la puerta.');
+
+    expect(result.attempts).toBe(2);
+    expect(result.plan.unplacedItems).toEqual([]);
+    expect(result.resolutionLog).toEqual([
+      { attempt: 1, unplaced: 1, critical: 1, revised: true },
+      { attempt: 2, unplaced: 0, critical: 0, revised: false },
+    ]);
+    expect(agentPort.reviseConstraints).toHaveBeenCalledTimes(1);
+
+    const [reviseParams] = (agentPort.reviseConstraints as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(reviseParams.rulesText).toBe('Perfiles no pueden ir del lado de la puerta.');
+    expect(reviseParams.previousConstraints).toEqual({
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+    });
+    expect(reviseParams.problems.unplaced).toEqual([{ productCode: 'P-100', reason: expect.any(String) }]);
+    expect(reviseParams.problems.criticalAlerts.length).toBeGreaterThan(0);
+    expect(reviseParams.catalogContext.productCodes).toEqual(['P-100']);
+  });
+
+  it('never converges: after maxPlanAttempts, returns the BEST plan (fewest unplaced) without throwing', async () => {
+    const operation = createNarrowZoneOperation();
+    const stuckConstraints = {
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+    } satisfies ConstraintSet;
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue(stuckConstraints),
+      reviseConstraints: vi.fn().mockResolvedValue(stuckConstraints),
+    });
+    const { service } = createService(operation, agentPort, { maxPlanAttempts: 2 });
+
+    const result = await service.plan('operation-1', 'Perfiles no pueden ir del lado de la puerta.');
+
+    expect(result.attempts).toBe(2);
+    expect(result.plan.unplacedItems).toHaveLength(1);
+    expect(result.resolutionLog).toEqual([
+      { attempt: 1, unplaced: 1, critical: 1, revised: true },
+      { attempt: 2, unplaced: 1, critical: 1, revised: false },
+    ]);
+    expect(agentPort.reviseConstraints).toHaveBeenCalledTimes(1);
+    expect(agentPort.explainPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it('warnings never trigger a retry: a plan with only a WARNING alert (no unplaced, no critical) is treated as clean', async () => {
+    const operation = createOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [
+          { type: 'ZONE_RESTRICTION', productCode: 'P-100', zone: SharedTruckZoneType.CABIN_SIDE },
+          { type: 'ZONE_RESTRICTION', productCode: 'P-200', zone: SharedTruckZoneType.CABIN_SIDE },
+        ],
+      } satisfies ConstraintSet),
+    });
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'Confine both products to the cabin side.');
+
+    expect(result.plan.unplacedItems).toEqual([]);
+    expect(result.plan.alerts.some((alert) => alert.severity === 'CRITICAL')).toBe(false);
+    expect(result.plan.alerts.some((alert) => alert.severity === 'WARNING')).toBe(true);
+    expect(result.attempts).toBe(1);
+    expect(agentPort.reviseConstraints).not.toHaveBeenCalled();
+  });
+
+  it('preview semantics still hold across the loop: no LoadingPlan row is ever created or updated', async () => {
+    const operation = createNarrowZoneOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+      } satisfies ConstraintSet),
+      reviseConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
+    });
+    const { service, prisma } = createService(operation, agentPort);
+
+    await service.plan('operation-1', 'Any rule.');
+
+    expect(prisma.loadingPlan.create).not.toHaveBeenCalled();
+    expect(prisma.loadingPlan.update).not.toHaveBeenCalled();
+  });
+
+  it('gate on every attempt: a revised ConstraintSet citing a hallucinated productCode is dropped before reaching the solver', async () => {
+    const operation = createNarrowZoneOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+      } satisfies ConstraintSet),
+      reviseConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'STACKING_PROHIBITION', productCode: 'GHOST-999' }],
+      } satisfies ConstraintSet),
+    });
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'Any rule.');
+
+    expect(result.attempts).toBe(2);
+    expect(result.appliedRules).toEqual([]);
+    expect(result.droppedRules).toHaveLength(1);
+    expect(result.droppedRules[0].rule).toEqual({ type: 'STACKING_PROHIBITION', productCode: 'GHOST-999' });
+    expect(result.droppedRules[0].reason).toContain('GHOST-999');
+    // Hallucinated rule dropped -> zero rules applied on the revised attempt -> product unrestricted -> placeable in DOOR_SIDE.
+    expect(result.plan.unplacedItems).toEqual([]);
   });
 });
