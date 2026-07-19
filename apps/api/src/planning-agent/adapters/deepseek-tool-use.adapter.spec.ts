@@ -1,7 +1,7 @@
-import { TruckZoneType as SharedTruckZoneType } from '@camiones/shared';
+import { TruckZoneType as SharedTruckZoneType, type ConstraintSet } from '@camiones/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadingPlannerResult } from '../../domain/loading-planner/loading-planner.types';
-import type { CatalogContext } from '../ports/agent.port';
+import type { CatalogContext, PlanProblems } from '../ports/agent.port';
 import { DeepSeekNoToolCallError } from './deepseek.client';
 import { DeepSeekToolUseAdapter, DeepSeekToolUseUnsupportedError, SET_CONSTRAINTS_TOOL } from './deepseek-tool-use.adapter';
 
@@ -217,5 +217,76 @@ describe('DeepSeekToolUseAdapter.explainPlan (no tool needed — plain chatCompl
     const [params] = client.chatCompletion.mock.calls[0];
     const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
     expect(systemMessage?.content.toLowerCase()).toContain('espanol');
+  });
+});
+
+describe('DeepSeekToolUseAdapter.diagnoseUnresolvedPlan (DIAGNOSIS agent, no tool needed — plain chatCompletion)', () => {
+  const constraints: ConstraintSet = {
+    version: 1,
+    hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+  };
+  const problems: PlanProblems = {
+    unplaced: [{ productCode: 'P-100', reason: 'No floor space available in the target zone or fallback zones.' }],
+    criticalAlerts: [{ type: 'UNPLACED_ITEM', message: 'Product P-100 unit 1 was not placed.' }],
+  };
+  const diagnosisPlan = {
+    placedItems: [],
+    unplacedItems: [{ productId: 'P-100', unitIndex: 1, message: 'No floor space available.' }],
+    steps: [],
+    alerts: [{ type: 'UNPLACED_ITEM', severity: 'CRITICAL', message: 'Product P-100 unit 1 was not placed.' }],
+    metrics: { volumeUtilizationPct: 95, unplacedItemCount: 1 },
+  } as unknown as LoadingPlannerResult;
+
+  it('returns the plain chatCompletion response and never calls chatCompletionWithTools', async () => {
+    const client = mockClient({ chatCompletion: 'El camion esta lleno del lado que se permite; probá con un camion mas grande.' });
+    const adapter = new DeepSeekToolUseAdapter(client);
+
+    const diagnosis = await adapter.diagnoseUnresolvedPlan({
+      rulesText: 'Perfiles no pueden ir del lado de la puerta.',
+      constraints,
+      plan: diagnosisPlan,
+      problems,
+      catalogContext,
+    });
+
+    expect(diagnosis).toBe('El camion esta lleno del lado que se permite; probá con un camion mas grande.');
+    expect(client.chatCompletion).toHaveBeenCalledTimes(1);
+    expect(client.chatCompletionWithTools).not.toHaveBeenCalled();
+  });
+
+  it('sends the same Spanish logistics-diagnostician system prompt as DeepSeekJsonAdapter', async () => {
+    const client = mockClient({ chatCompletion: 'diagnostico' });
+    const adapter = new DeepSeekToolUseAdapter(client);
+
+    await adapter.diagnoseUnresolvedPlan({ rulesText: 'r', constraints, plan: diagnosisPlan, problems, catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    const content: string = systemMessage.content;
+
+    expect(content.toLowerCase()).toContain('espanol');
+    expect(content.toLowerCase()).toMatch(/diagnostic/);
+    expect(content.toLowerCase()).toMatch(/sugerencia/);
+  });
+
+  it('includes the operator rules, applied constraints, and problems in the user message', async () => {
+    const client = mockClient({ chatCompletion: 'diagnostico' });
+    const adapter = new DeepSeekToolUseAdapter(client);
+
+    await adapter.diagnoseUnresolvedPlan({
+      rulesText: 'Perfiles no pueden ir del lado de la puerta.',
+      constraints,
+      plan: diagnosisPlan,
+      problems,
+      catalogContext,
+    });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const userMessage = params.messages.find((message: { role: string }) => message.role === 'user');
+    const payload = JSON.parse(userMessage.content);
+
+    expect(payload.operatorRules).toBe('Perfiles no pueden ir del lado de la puerta.');
+    expect(payload.appliedRules).toEqual(constraints.hardRules);
+    expect(payload.problems).toEqual(problems);
   });
 });

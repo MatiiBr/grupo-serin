@@ -50,6 +50,21 @@ export interface ReviseConstraintsParams {
   catalogContext: CatalogContext;
 }
 
+/**
+ * DIAGNOSIS agent — handed to `AgentPort.diagnoseUnresolvedPlan` when the
+ * self-correcting re-plan loop finishes on a BEST attempt that is still not
+ * clean (unplaced units and/or critical alerts survive after
+ * `maxPlanAttempts`). Carries everything the model needs to explain WHY,
+ * without re-deriving the problem from a raw `LoadingPlannerResult` alone.
+ */
+export interface DiagnoseUnresolvedPlanParams {
+  rulesText: string;
+  constraints: ConstraintSet;
+  plan: LoadingPlannerResult;
+  problems: PlanProblems;
+  catalogContext: CatalogContext;
+}
+
 export interface AgentPort {
   /** Turns free-text operator rules into a structured (not-yet-validated) `ConstraintSet`. */
   planConstraints(params: PlanConstraintsParams): Promise<ConstraintSet>;
@@ -62,6 +77,14 @@ export interface AgentPort {
    * operator's intent but is expected to yield a more placeable plan.
    */
   reviseConstraints(params: ReviseConstraintsParams): Promise<ConstraintSet>;
+  /**
+   * DIAGNOSIS agent — called ONLY when the re-plan loop's BEST attempt is
+   * still not clean after `maxPlanAttempts`. Returns a short, plain-language
+   * SPANISH diagnosis for the operator: which items could not be placed, the
+   * likely cause (truck effectively full vs. an over-restrictive rule), and
+   * ONE concrete, actionable suggestion.
+   */
+  diagnoseUnresolvedPlan(params: DiagnoseUnresolvedPlanParams): Promise<string>;
 }
 
 /**

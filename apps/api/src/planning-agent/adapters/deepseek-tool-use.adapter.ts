@@ -1,7 +1,17 @@
 import { ProductFamily, TruckZoneType, type ConstraintSet } from '@camiones/shared';
-import type { AgentPort, CatalogContext, ExplainPlanParams, PlanConstraintsParams, PlanProblems, ReviseConstraintsParams } from '../ports/agent.port';
+import type { LoadingPlannerResult } from '../../domain/loading-planner/loading-planner.types';
+import type {
+  AgentPort,
+  CatalogContext,
+  DiagnoseUnresolvedPlanParams,
+  ExplainPlanParams,
+  PlanConstraintsParams,
+  PlanProblems,
+  ReviseConstraintsParams,
+} from '../ports/agent.port';
 import { parseAndValidateConstraintSet } from './constraint-set-parser';
 import {
+  DIAGNOSE_UNRESOLVED_PLAN_SYSTEM_PROMPT,
   EXPLAIN_PLAN_SYSTEM_PROMPT,
   formatCatalogContextLines,
   REVISION_SYSTEM_PROMPT_ADDENDUM,
@@ -37,6 +47,12 @@ import { DeepSeekNoToolCallError, type DeepSeekChatMessage, type DeepSeekClient,
  * schema wording and catalog injection can never drift between the two
  * adapters. `explainPlan` needs no structured output, so it reuses plain
  * `chatCompletion` with the same Spanish system prompt as the JSON adapter.
+ *
+ * DIAGNOSIS agent — `diagnoseUnresolvedPlan` mirrors `explainPlan`: free
+ * text, no tool needed, plain `chatCompletion`, sharing
+ * `DIAGNOSE_UNRESOLVED_PLAN_SYSTEM_PROMPT` (imported from
+ * `deepseek-json.adapter.ts`) so both adapters give the operator the exact
+ * same diagnostician framing.
  */
 
 const SET_CONSTRAINTS_TOOL_NAME = 'set_constraints';
@@ -185,6 +201,20 @@ export class DeepSeekToolUseAdapter implements AgentPort {
     return this.client.chatCompletion({ messages });
   }
 
+  /**
+   * DIAGNOSIS agent — free-text output, no tool needed even on this
+   * tool-use adapter, so it reuses plain `chatCompletion` with the exact
+   * same Spanish diagnostician system prompt as `DeepSeekJsonAdapter`.
+   */
+  async diagnoseUnresolvedPlan({ rulesText, constraints, plan, problems, catalogContext }: DiagnoseUnresolvedPlanParams): Promise<string> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: this.buildDiagnosisSystemPrompt(catalogContext) },
+      { role: 'user', content: this.buildDiagnosisUserPrompt(rulesText, constraints, problems, plan) },
+    ];
+
+    return this.client.chatCompletion({ messages });
+  }
+
   /** Forces `SET_CONSTRAINTS_TOOL` via `tool_choice`, then runs the arguments through the shared parse+validate gate. */
   private async callSetConstraintsTool(messages: DeepSeekChatMessage[]): Promise<ConstraintSet> {
     let argumentsJson: string;
@@ -220,6 +250,25 @@ export class DeepSeekToolUseAdapter implements AgentPort {
       operatorRules: rulesText,
       previousConstraints,
       problems,
+    });
+  }
+
+  /** DIAGNOSIS agent — same catalog-injection convention as the other prompts. */
+  private buildDiagnosisSystemPrompt(catalogContext: CatalogContext): string {
+    return [DIAGNOSE_UNRESOLVED_PLAN_SYSTEM_PROMPT, ...formatCatalogContextLines(catalogContext)].join('\n');
+  }
+
+  private buildDiagnosisUserPrompt(
+    rulesText: string,
+    constraints: ConstraintSet,
+    problems: PlanProblems,
+    plan: LoadingPlannerResult,
+  ): string {
+    return JSON.stringify({
+      operatorRules: rulesText,
+      appliedRules: constraints.hardRules,
+      problems,
+      planMetrics: plan.metrics,
     });
   }
 }

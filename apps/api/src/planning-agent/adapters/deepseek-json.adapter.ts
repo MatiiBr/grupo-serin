@@ -1,6 +1,15 @@
 import 'reflect-metadata';
 import type { ConstraintSet } from '@camiones/shared';
-import type { AgentPort, CatalogContext, ExplainPlanParams, PlanConstraintsParams, PlanProblems, ReviseConstraintsParams } from '../ports/agent.port';
+import type { LoadingPlannerResult } from '../../domain/loading-planner/loading-planner.types';
+import type {
+  AgentPort,
+  CatalogContext,
+  DiagnoseUnresolvedPlanParams,
+  ExplainPlanParams,
+  PlanConstraintsParams,
+  PlanProblems,
+  ReviseConstraintsParams,
+} from '../ports/agent.port';
 import { ConstraintSetParseError, ConstraintSetValidationError, parseAndValidateConstraintSet } from './constraint-set-parser';
 import type { DeepSeekChatMessage, DeepSeekClient } from './deepseek.client';
 
@@ -16,10 +25,19 @@ import type { DeepSeekChatMessage, DeepSeekClient } from './deepseek.client';
  * the caller (the Phase 7 validation gate) can react deterministically.
  *
  * `SYSTEM_PROMPT_HEADER`, `REVISION_SYSTEM_PROMPT_ADDENDUM`,
- * `EXPLAIN_PLAN_SYSTEM_PROMPT`, and `formatCatalogContextLines` are exported
- * so `DeepSeekToolUseAdapter` (real, tool-use — see its module docstring)
- * mirrors the EXACT same rule-schema wording and catalog injection rather
- * than a hand-copied, driftable duplicate.
+ * `EXPLAIN_PLAN_SYSTEM_PROMPT`, `DIAGNOSE_UNRESOLVED_PLAN_SYSTEM_PROMPT`, and
+ * `formatCatalogContextLines` are exported so `DeepSeekToolUseAdapter` (real,
+ * tool-use — see its module docstring) mirrors the EXACT same rule-schema
+ * wording and catalog injection rather than a hand-copied, driftable
+ * duplicate.
+ *
+ * DIAGNOSIS agent — `diagnoseUnresolvedPlan` is called by
+ * `PlanningAgentService.plan` ONLY when the self-correcting re-plan loop's
+ * BEST attempt is still not clean after `maxPlanAttempts` (unplaced units
+ * and/or critical alerts remain). It uses plain `chatCompletion` (free text,
+ * no schema to validate — this is prose for a human, not a `ConstraintSet`)
+ * with a dedicated Spanish system prompt framing the model as a logistics
+ * diagnostician.
  */
 
 export { ConstraintSetParseError, ConstraintSetValidationError };
@@ -59,6 +77,23 @@ export const REVISION_SYSTEM_PROMPT_ADDENDUM = [
 /** Reused verbatim by `DeepSeekToolUseAdapter.explainPlan` (no tool needed for this call). */
 export const EXPLAIN_PLAN_SYSTEM_PROMPT =
   'Sos un asistente de logistica. Explicale el plan de carga a un operario de deposito en lenguaje claro y directo, en 2-4 parrafos cortos. Responde SIEMPRE en espanol.';
+
+/**
+ * DIAGNOSIS agent — reused verbatim by `DeepSeekToolUseAdapter.diagnoseUnresolvedPlan`
+ * (no tool needed, free text for a human operator). Frames the model as a
+ * logistics diagnostician: given a plan that could not place every unit
+ * and/or raised critical alerts, explain WHICH items failed, the LIKELY
+ * cause, and ONE concrete suggestion.
+ */
+export const DIAGNOSE_UNRESOLVED_PLAN_SYSTEM_PROMPT = [
+  'Sos un diagnosticador experto en logistica de cargas.',
+  'Se te da un plan de carga que NO logro ubicar todos los productos y/o genero alertas criticas, junto con las reglas del operario, las restricciones aplicadas y un resumen de los problemas (items sin ubicar y alertas criticas).',
+  'Escribi un diagnostico breve y accionable para un operario de deposito, en espanol, en 1 a 3 parrafos cortos:',
+  '1) Que productos no se pudieron ubicar.',
+  '2) La causa mas probable: el camion esta efectivamente lleno (sin espacio o capacidad disponible) o una regla del operario es demasiado restrictiva.',
+  '3) UNA sugerencia concreta y accionable (por ejemplo: relajar una regla especifica, usar un camion mas grande, o dividir la carga en dos viajes).',
+  'Se conciso, directo y practico. Nada de relleno ni disculpas. Responde SIEMPRE en espanol.',
+].join('\n');
 
 /** Formats the real catalog into prompt lines — shared by both `AgentPort` implementations so neither hallucinates against a stale/hand-copied catalog format. */
 export function formatCatalogContextLines(catalogContext: CatalogContext): string[] {
@@ -102,6 +137,21 @@ export class DeepSeekJsonAdapter implements AgentPort {
     return this.client.chatCompletion({ messages });
   }
 
+  /**
+   * DIAGNOSIS agent — called ONLY when the re-plan loop's BEST attempt is
+   * still not clean. Free-text output (no `ConstraintSet` to validate), so
+   * plain `chatCompletion` is enough — no tool needed even on the tool-use
+   * adapter.
+   */
+  async diagnoseUnresolvedPlan({ rulesText, constraints, plan, problems, catalogContext }: DiagnoseUnresolvedPlanParams): Promise<string> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: this.buildDiagnosisSystemPrompt(catalogContext) },
+      { role: 'user', content: this.buildDiagnosisUserPrompt(rulesText, constraints, problems, plan) },
+    ];
+
+    return this.client.chatCompletion({ messages });
+  }
+
   private buildSystemPrompt(catalogContext: CatalogContext): string {
     return [SYSTEM_PROMPT_HEADER, ...formatCatalogContextLines(catalogContext)].join('\n');
   }
@@ -122,6 +172,30 @@ export class DeepSeekJsonAdapter implements AgentPort {
       operatorRules: rulesText,
       previousConstraints,
       problems,
+    });
+  }
+
+  /** DIAGNOSIS agent — same catalog-injection convention as the other prompts. */
+  private buildDiagnosisSystemPrompt(catalogContext: CatalogContext): string {
+    return [DIAGNOSE_UNRESOLVED_PLAN_SYSTEM_PROMPT, ...formatCatalogContextLines(catalogContext)].join('\n');
+  }
+
+  /**
+   * DIAGNOSIS agent — `planMetrics` (not the full `placedItems`/`steps`
+   * arrays) is enough signal for the "truck effectively full vs.
+   * over-restrictive rule" judgment call, and keeps the payload small.
+   */
+  private buildDiagnosisUserPrompt(
+    rulesText: string,
+    constraints: ConstraintSet,
+    problems: PlanProblems,
+    plan: LoadingPlannerResult,
+  ): string {
+    return JSON.stringify({
+      operatorRules: rulesText,
+      appliedRules: constraints.hardRules,
+      problems,
+      planMetrics: plan.metrics,
     });
   }
 }

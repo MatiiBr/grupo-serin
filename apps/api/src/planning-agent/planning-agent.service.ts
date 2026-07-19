@@ -22,6 +22,13 @@ import { ConstraintSetStructuralError, DroppedRule, validateConstraintSet } from
  * is a computed-only preview, never persisted or approved (spec's "Preview
  * Semantics" requirement) — across every attempt of the loop, not just the
  * first.
+ *
+ * DIAGNOSIS agent — after the loop, if the BEST attempt is still NOT clean
+ * (unplaced items and/or critical alerts survive after `maxPlanAttempts`),
+ * `agentPort.diagnoseUnresolvedPlan` is called once and its plain-language
+ * Spanish diagnosis is included as `diagnosis` in the preview. If the BEST
+ * attempt IS clean, `diagnoseUnresolvedPlan` is never called and `diagnosis`
+ * is omitted. `explainPlan` still runs on the best plan either way.
  */
 
 export interface ResolutionLogEntry {
@@ -38,6 +45,11 @@ export interface PlanningAgentPreview {
   droppedRules: DroppedRule[];
   attempts: number;
   resolutionLog: ResolutionLogEntry[];
+  /**
+   * DIAGNOSIS agent — present ONLY when the BEST attempt is not clean
+   * (unplaced items and/or critical alerts). Absent when the plan is clean.
+   */
+  diagnosis?: string;
 }
 
 interface PlanAttempt {
@@ -94,7 +106,7 @@ export class PlanningAgentService {
     const { best, resolutionLog } = await this.runPlanningLoop(rulesText, plannerInput, catalogContext);
     const explanation = await this.agentPort.explainPlan({ plan: best.plan, constraints: best.constraintSet });
 
-    return {
+    const preview: PlanningAgentPreview = {
       plan: best.plan,
       explanation,
       appliedRules: best.appliedRules,
@@ -102,6 +114,19 @@ export class PlanningAgentService {
       attempts: resolutionLog.length,
       resolutionLog,
     };
+
+    const isClean = best.problems.unplaced.length === 0 && best.problems.criticalAlerts.length === 0;
+    if (!isClean) {
+      preview.diagnosis = await this.agentPort.diagnoseUnresolvedPlan({
+        rulesText,
+        constraints: best.constraintSet,
+        plan: best.plan,
+        problems: best.problems,
+        catalogContext,
+      });
+    }
+
+    return preview;
   }
 
   /**

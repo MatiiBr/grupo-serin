@@ -19,6 +19,10 @@ import { PlanningAgentService } from './planning-agent.service';
  *
  * Also covers Phase 7's validation-gate scenarios end-to-end (7.1-7.3):
  * this is the file `tasks.md` names as the home for those RED specs.
+ *
+ * Also covers the DIAGNOSIS agent (`agentPort.diagnoseUnresolvedPlan`):
+ * called once, after the loop, ONLY when the BEST attempt is still not
+ * clean; never called when it is.
  */
 
 function createOperation(
@@ -90,6 +94,7 @@ function mockAgentPort(overrides: Partial<AgentPort> = {}): AgentPort {
     planConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
     explainPlan: vi.fn().mockResolvedValue('The plan places every unit within capacity.'),
     reviseConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
+    diagnoseUnresolvedPlan: vi.fn().mockResolvedValue('Diagnostico de ejemplo.'),
     ...overrides,
   };
 }
@@ -410,5 +415,72 @@ describe('PlanningAgentService.plan — self-correcting re-planning loop', () =>
     expect(result.droppedRules[0].reason).toContain('GHOST-999');
     // Hallucinated rule dropped -> zero rules applied on the revised attempt -> product unrestricted -> placeable in DOOR_SIDE.
     expect(result.plan.unplacedItems).toEqual([]);
+  });
+});
+
+describe('PlanningAgentService.plan — DIAGNOSIS agent for unresolved plans', () => {
+  it('unresolved: after maxPlanAttempts the BEST plan still has unplaced/critical, diagnoseUnresolvedPlan IS called once with the best attempt, and its text is included as `diagnosis`', async () => {
+    const operation = createNarrowZoneOperation();
+    const stuckConstraints = {
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+    } satisfies ConstraintSet;
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue(stuckConstraints),
+      reviseConstraints: vi.fn().mockResolvedValue(stuckConstraints),
+      diagnoseUnresolvedPlan: vi.fn().mockResolvedValue('El camion esta lleno del lado que se permite; conviene usar un camion mas grande.'),
+    });
+    const { service } = createService(operation, agentPort, { maxPlanAttempts: 2 });
+
+    const result = await service.plan('operation-1', 'Perfiles no pueden ir del lado de la puerta.');
+
+    expect(result.plan.unplacedItems).toHaveLength(1);
+    expect(result.diagnosis).toBe('El camion esta lleno del lado que se permite; conviene usar un camion mas grande.');
+    expect(agentPort.diagnoseUnresolvedPlan).toHaveBeenCalledTimes(1);
+
+    const [params] = (agentPort.diagnoseUnresolvedPlan as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(params.rulesText).toBe('Perfiles no pueden ir del lado de la puerta.');
+    expect(params.constraints).toEqual(stuckConstraints);
+    expect(params.plan).toEqual(result.plan);
+    expect(params.problems.unplaced).toEqual([{ productCode: 'P-100', reason: expect.any(String) }]);
+    expect(params.problems.criticalAlerts.length).toBeGreaterThan(0);
+    expect(params.catalogContext.productCodes).toEqual(['P-100']);
+  });
+
+  it('clean: diagnoseUnresolvedPlan is NEVER called and the response has no `diagnosis`', async () => {
+    const operation = createOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'STACKING_PROHIBITION', productCode: 'P-100' }],
+      } satisfies ConstraintSet),
+    });
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'Do not stack P-100.');
+
+    expect(result.plan.unplacedItems).toEqual([]);
+    expect(agentPort.diagnoseUnresolvedPlan).not.toHaveBeenCalled();
+    expect(result.diagnosis).toBeUndefined();
+    expect('diagnosis' in result).toBe(false);
+  });
+
+  it('still non-persisting on the unresolved path: no LoadingPlan row is ever created or updated', async () => {
+    const operation = createNarrowZoneOperation();
+    const stuckConstraints = {
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+    } satisfies ConstraintSet;
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue(stuckConstraints),
+      reviseConstraints: vi.fn().mockResolvedValue(stuckConstraints),
+      diagnoseUnresolvedPlan: vi.fn().mockResolvedValue('Diagnostico.'),
+    });
+    const { service, prisma } = createService(operation, agentPort, { maxPlanAttempts: 2 });
+
+    await service.plan('operation-1', 'Perfiles no pueden ir del lado de la puerta.');
+
+    expect(prisma.loadingPlan.create).not.toHaveBeenCalled();
+    expect(prisma.loadingPlan.update).not.toHaveBeenCalled();
   });
 });
