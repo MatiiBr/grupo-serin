@@ -637,6 +637,7 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
   const metalness = isPackage ? 0.12 : 0.9;
   const emissive = alertStatus === 'critical' ? '#7a0000' : '#000000';
   const mat = <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />;
+  const seed = (item.id.charCodeAt(0) * 97 + item.id.charCodeAt(item.id.length - 1) * 131 + item.lengthMm) % 1000;
 
   let cargo: ReactElement;
   if (item.productFamily === ProductFamily.COIL) {
@@ -651,16 +652,19 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
       </mesh>
     );
   } else if (item.productFamily === ProductFamily.TUBE) {
-    // a bundle of pipes lying along the truck length
+    // a bundle of round pipes of MIXED diameters (as shipped per dispatch)
     const cols = 4;
     const rows = 2;
-    const pr = Math.max(0.03, 0.92 * Math.min(width / cols, height / rows) / 2);
+    const cellW = width / cols;
+    const cellH = height / rows;
+    const cellR = Math.min(cellW, cellH) / 2;
     const pipes = [];
     for (let c = 0; c < cols; c += 1) {
       for (let r = 0; r < rows; r += 1) {
+        const pr = Math.max(0.028, cellR * (0.5 + 0.46 * pseudoRandom(seed + c * 7.1 + r * 3.3)));
         pipes.push(
-          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * (height / rows), -width / 2 + (c + 0.5) * (width / cols)]} rotation={[0, 0, Math.PI / 2]}>
-            <cylinderGeometry args={[pr, pr, length, 14]} />
+          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * cellH, -width / 2 + (c + 0.5) * cellW]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[pr, pr, length, 16]} />
             <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
           </mesh>,
         );
@@ -683,16 +687,19 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
     }
     cargo = <group>{plates}</group>;
   } else if (item.productFamily === ProductFamily.SQUARE_TUBE) {
-    // bundle of square-section tubes
+    // a bundle of square-section tubes of MIXED sizes
     const cols = 4;
     const rows = 2;
-    const sw = 0.88 * (width / cols);
-    const sh = 0.88 * (height / rows);
+    const cellW = width / cols;
+    const cellH = height / rows;
     const tubes = [];
     for (let c = 0; c < cols; c += 1) {
       for (let r = 0; r < rows; r += 1) {
+        const v = pseudoRandom(seed + c * 5.7 + r * 9.1);
+        const sw = cellW * (0.6 + 0.34 * v);
+        const sh = cellH * (0.6 + 0.34 * v);
         tubes.push(
-          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * (height / rows), -width / 2 + (c + 0.5) * (width / cols)]}>
+          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * cellH, -width / 2 + (c + 0.5) * cellW]}>
             <boxGeometry args={[length, sh, sw]} />
             <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
             <Edges color={edgeColor} />
@@ -702,25 +709,33 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
     }
     cargo = <group>{tubes}</group>;
   } else if (item.productFamily === ProductFamily.REBAR) {
-    // sagging bundle of construction rebar (bows under its own weight)
+    // an irregular bundle of construction rebar — bends and deforms, no fixed shape
     const cols = 5;
     const rows = 2;
-    const rr = Math.max(0.02, 0.78 * Math.min(width / cols, height / rows) / 2);
+    const cellW = width / cols;
+    const cellH = height / rows;
+    const cellR = Math.min(cellW, cellH) / 2;
     const rods = [];
     for (let c = 0; c < cols; c += 1) {
       for (let r = 0; r < rows; r += 1) {
-        const pz = -width / 2 + (c + 0.5) * (width / cols);
-        const py = -height / 2 + (r + 0.5) * (height / rows);
-        const sag = Math.min(height * 0.6, 0.14) * (0.6 + 0.4 * (((c + r) % 3) / 2));
+        const v1 = pseudoRandom(seed + c * 2.3 + r * 8.7);
+        const v2 = pseudoRandom(seed + c * 6.1 + r * 1.9 + 41);
+        const v3 = pseudoRandom(seed + c * 4.4 + r * 5.5 + 93);
+        const pz = -width / 2 + (c + 0.5) * cellW;
+        const py = -height / 2 + (r + 0.5) * cellH;
+        const rr = Math.max(0.015, cellR * (0.42 + 0.4 * v3));
+        const sag = 0.05 + 0.2 * v1;
+        const wob = (v2 - 0.5) * cellW * 0.8;
         const curve = new THREE.CatmullRomCurve3([
           new THREE.Vector3(-length / 2, py, pz),
-          new THREE.Vector3(0, py - sag, pz),
-          new THREE.Vector3(length / 2, py, pz),
+          new THREE.Vector3(-length * 0.18, py - sag * 0.65, pz + wob * 0.4),
+          new THREE.Vector3(length * 0.12, py - sag, pz + wob),
+          new THREE.Vector3(length / 2, py - sag * 0.25, pz + wob * 0.25),
         ]);
         rods.push(
           <mesh key={`${c}-${r}`} castShadow receiveShadow>
-            <tubeGeometry args={[curve, 18, rr, 7, false]} />
-            <meshStandardMaterial color={color} emissive={emissive} roughness={0.55} metalness={0.7} />
+            <tubeGeometry args={[curve, 24, rr, 6, false]} />
+            <meshStandardMaterial color={color} emissive={emissive} roughness={0.62} metalness={0.6} />
           </mesh>,
         );
       }
@@ -871,6 +886,12 @@ function truckDimensions(items: PlacedItem[], truck: Truck | null) {
     widthMm: truck?.widthMm ?? usedWidth,
     heightMm: truck?.heightMm ?? usedHeight,
   };
+}
+
+// deterministic per-item pseudo-random (stable across renders, so bundles don't flicker)
+function pseudoRandom(seed: number): number {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
 }
 
 function familyColor(family: ProductFamily) {
