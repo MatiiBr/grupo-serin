@@ -345,3 +345,92 @@ describe('DeepSeekJsonAdapter.diagnoseUnresolvedPlan (DIAGNOSIS agent)', () => {
     expect(payload.problems).toEqual(problems);
   });
 });
+
+describe('DeepSeekJsonAdapter.validateIntent (VALIDATION agent, advisory)', () => {
+  const constraints: ConstraintSet = {
+    version: 1,
+    hardRules: [{ type: 'ZONE_RESTRICTION', productCode: 'P-100', zone: 'CABIN_SIDE' as never }],
+  };
+
+  it('parses a matching-intent JSON response into an IntentValidation, using plain chatCompletion (no tool call)', async () => {
+    const client = mockClient(JSON.stringify({ intentMatch: true, issues: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    const result = await adapter.validateIntent({ rulesText: 'P-100 no puede ir en la cabina.', constraints, catalogContext });
+
+    expect(result).toEqual({ intentMatch: true, issues: [] });
+    expect(client.chatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('parses a mismatching-intent JSON response, surfacing the Spanish issues', async () => {
+    const golden = {
+      intentMatch: false,
+      issues: ['Se uso ZONE_RESTRICTION (confina) cuando el operario pidio prohibir la zona (PRODUCT_ZONE_BAN).'],
+    };
+    const client = mockClient(JSON.stringify(golden));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    const result = await adapter.validateIntent({ rulesText: 'P-100 no puede ir en la cabina.', constraints, catalogContext });
+
+    expect(result).toEqual(golden);
+  });
+
+  it('sends a Spanish reviewer system prompt that distinguishes ZONE_RESTRICTION (confine-TO) from PRODUCT_ZONE_BAN (ban-FROM)', async () => {
+    const client = mockClient(JSON.stringify({ intentMatch: true, issues: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await adapter.validateIntent({ rulesText: 'r', constraints, catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    const content: string = systemMessage.content;
+
+    expect(content.toLowerCase()).toContain('espanol');
+    expect(content).toContain('ZONE_RESTRICTION');
+    expect(content).toContain('PRODUCT_ZONE_BAN');
+    expect(content).toContain('intentMatch');
+    expect(content).toContain('issues');
+  });
+
+  it('injects the catalog context into the system prompt (same helper as the other prompts)', async () => {
+    const client = mockClient(JSON.stringify({ intentMatch: true, issues: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await adapter.validateIntent({ rulesText: 'r', constraints, catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    expect(systemMessage.content).toContain('P-100');
+    expect(systemMessage.content).toContain('P-200');
+  });
+
+  it('includes the operator rules and the extracted constraints in the user message', async () => {
+    const client = mockClient(JSON.stringify({ intentMatch: true, issues: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    await adapter.validateIntent({ rulesText: 'P-100 no puede ir en la cabina.', constraints, catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const userMessage = params.messages.find((message: { role: string }) => message.role === 'user');
+    const payload = JSON.parse(userMessage.content);
+
+    expect(payload.operatorRules).toBe('P-100 no puede ir en la cabina.');
+    expect(payload.extractedConstraints).toEqual(constraints.hardRules);
+  });
+
+  it('rejects with IntentValidationParseError when the response is not valid JSON', async () => {
+    const client = mockClient('this is not json {');
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    const error = await adapter.validateIntent({ rulesText: 'r', constraints, catalogContext }).catch((e: unknown) => e);
+    expect((error as Error).name).toBe('IntentValidationParseError');
+  });
+
+  it('rejects with IntentValidationSchemaError when the JSON is well-formed but fails the IntentValidation schema', async () => {
+    const client = mockClient(JSON.stringify({ intentMatch: 'yes', issues: [] }));
+    const adapter = new DeepSeekJsonAdapter(client);
+
+    const error = await adapter.validateIntent({ rulesText: 'r', constraints, catalogContext }).catch((e: unknown) => e);
+    expect((error as Error).name).toBe('IntentValidationSchemaError');
+  });
+});

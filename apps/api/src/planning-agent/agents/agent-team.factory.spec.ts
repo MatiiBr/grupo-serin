@@ -25,6 +25,7 @@ const agentsConfig: DeepSeekAgentsConfig = {
   revise: { model: 'deepseek-chat' },
   explain: { model: 'deepseek-chat' },
   diagnose: { model: 'deepseek-chat' },
+  validate: { model: 'deepseek-chat' },
 };
 
 describe('buildAgentTeam', () => {
@@ -54,5 +55,19 @@ describe('buildAgentTeam', () => {
 
     expect(client.chatCompletionWithTools).toHaveBeenCalledTimes(1);
     expect(client.chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('the built AgentTeam serves validateIntent (VALIDATION agent, advisory) via plain chatCompletion, regardless of adapterKind', async () => {
+    const client = mockClient();
+    (client.chatCompletion as ReturnType<typeof vi.fn>).mockResolvedValueOnce(JSON.stringify({ intentMatch: true, issues: [] }));
+    const team = buildAgentTeam(client, 'tooluse', agentsConfig);
+
+    const catalogContext = { productCodes: ['P-100'], families: ['COIL'], zones: ['CENTER'], destinations: ['dest-1'] };
+    const constraints = { version: 1 as const, hardRules: [] };
+    const result = await team.validateIntent({ rulesText: 'r', constraints, catalogContext });
+
+    expect(result).toEqual({ intentMatch: true, issues: [] });
+    expect(client.chatCompletion).toHaveBeenCalledTimes(1);
+    expect(client.chatCompletionWithTools).not.toHaveBeenCalled();
   });
 });

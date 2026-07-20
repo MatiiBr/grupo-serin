@@ -17,10 +17,12 @@ const ENV_KEYS = [
   'DEEPSEEK_MODEL_REVISE',
   'DEEPSEEK_MODEL_EXPLAIN',
   'DEEPSEEK_MODEL_DIAGNOSE',
+  'DEEPSEEK_MODEL_VALIDATE',
   'DEEPSEEK_TEMPERATURE_EXTRACT',
   'DEEPSEEK_TEMPERATURE_REVISE',
   'DEEPSEEK_TEMPERATURE_EXPLAIN',
   'DEEPSEEK_TEMPERATURE_DIAGNOSE',
+  'DEEPSEEK_TEMPERATURE_VALIDATE',
 ] as const;
 
 describe('deepseekConfig — per-agent model/temperature (multi-agent refactor)', () => {
@@ -47,6 +49,7 @@ describe('deepseekConfig — per-agent model/temperature (multi-agent refactor)'
     expect(config.agents.revise.model).toBe('deepseek-chat');
     expect(config.agents.explain.model).toBe('deepseek-chat');
     expect(config.agents.diagnose.model).toBe('deepseek-chat');
+    expect(config.agents.validate.model).toBe('deepseek-chat');
   });
 
   it('defaults every role temperature to undefined when neither the base nor the role temperature is set', () => {
@@ -57,14 +60,16 @@ describe('deepseekConfig — per-agent model/temperature (multi-agent refactor)'
     expect(config.agents.revise.temperature).toBeUndefined();
     expect(config.agents.explain.temperature).toBeUndefined();
     expect(config.agents.diagnose.temperature).toBeUndefined();
+    expect(config.agents.validate.temperature).toBeUndefined();
   });
 
-  it('reads a role-specific model override from DEEPSEEK_MODEL_EXTRACT/_REVISE/_EXPLAIN/_DIAGNOSE independently', () => {
+  it('reads a role-specific model override from DEEPSEEK_MODEL_EXTRACT/_REVISE/_EXPLAIN/_DIAGNOSE/_VALIDATE independently', () => {
     process.env.DEEPSEEK_MODEL = 'deepseek-chat';
     process.env.DEEPSEEK_MODEL_EXTRACT = 'deepseek-reasoner';
     process.env.DEEPSEEK_MODEL_REVISE = 'deepseek-revise-model';
     process.env.DEEPSEEK_MODEL_EXPLAIN = 'deepseek-explain-model';
     process.env.DEEPSEEK_MODEL_DIAGNOSE = 'deepseek-diagnose-model';
+    process.env.DEEPSEEK_MODEL_VALIDATE = 'deepseek-validate-model';
 
     const config = deepseekConfig();
 
@@ -72,6 +77,7 @@ describe('deepseekConfig — per-agent model/temperature (multi-agent refactor)'
     expect(config.agents.revise.model).toBe('deepseek-revise-model');
     expect(config.agents.explain.model).toBe('deepseek-explain-model');
     expect(config.agents.diagnose.model).toBe('deepseek-diagnose-model');
+    expect(config.agents.validate.model).toBe('deepseek-validate-model');
   });
 
   it('reads a base DEEPSEEK_TEMPERATURE and cascades it to every role whose own temperature is unset', () => {
@@ -100,5 +106,15 @@ describe('deepseekConfig — per-agent model/temperature (multi-agent refactor)'
     const config = deepseekConfig();
 
     expect(config.agents.diagnose.temperature).toBeUndefined();
+  });
+
+  it('reads a role-specific temperature override for validate that wins over the base temperature', () => {
+    process.env.DEEPSEEK_TEMPERATURE = '0.4';
+    process.env.DEEPSEEK_TEMPERATURE_VALIDATE = '0.1';
+
+    const config = deepseekConfig();
+
+    expect(config.agents.validate.temperature).toBe(0.1);
+    expect(config.agents.extract.temperature).toBe(0.4);
   });
 });

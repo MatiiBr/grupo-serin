@@ -95,6 +95,7 @@ function mockAgentPort(overrides: Partial<AgentPort> = {}): AgentPort {
     explainPlan: vi.fn().mockResolvedValue('The plan places every unit within capacity.'),
     reviseConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
     diagnoseUnresolvedPlan: vi.fn().mockResolvedValue('Diagnostico de ejemplo.'),
+    validateIntent: vi.fn().mockResolvedValue({ intentMatch: true, issues: [] }),
     ...overrides,
   };
 }
@@ -482,5 +483,111 @@ describe('PlanningAgentService.plan — DIAGNOSIS agent for unresolved plans', (
 
     expect(prisma.loadingPlan.create).not.toHaveBeenCalled();
     expect(prisma.loadingPlan.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('PlanningAgentService.plan — VALIDATION agent (advisory intent check)', () => {
+  it('calls validateIntent exactly once and surfaces the result as `intentValidation` on the preview', async () => {
+    const operation = createOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'STACKING_PROHIBITION', productCode: 'P-100' }],
+      } satisfies ConstraintSet),
+      validateIntent: vi.fn().mockResolvedValue({ intentMatch: true, issues: [] }),
+    });
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'Do not stack P-100.');
+
+    expect(agentPort.validateIntent).toHaveBeenCalledTimes(1);
+    expect(result.intentValidation).toEqual({ intentMatch: true, issues: [] });
+  });
+
+  it('passes the rulesText, the gate-validated (applied) constraints, and the catalogContext to validateIntent', async () => {
+    const operation = createOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [
+          { type: 'STACKING_PROHIBITION', productCode: 'P-100' },
+          { type: 'STACKING_PROHIBITION', productCode: 'P-999-GHOST' },
+        ],
+      } satisfies ConstraintSet),
+    });
+    const { service } = createService(operation, agentPort);
+
+    await service.plan('operation-1', 'Do not stack P-100 or P-999-GHOST.');
+
+    const [params] = (agentPort.validateIntent as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(params.rulesText).toBe('Do not stack P-100 or P-999-GHOST.');
+    // Only the APPLIED (gate-survived) rule reaches validateIntent — the hallucinated one was dropped.
+    expect(params.constraints).toEqual({ version: 1, hardRules: [{ type: 'STACKING_PROHIBITION', productCode: 'P-100' }] });
+    expect(params.catalogContext.productCodes).toEqual(['P-100', 'P-200']);
+  });
+
+  it('a mismatch verdict (intentMatch: false, with issues) is surfaced but never changes the plan or the applied constraints', async () => {
+    const operation = createOperation();
+    const hardRules = [{ type: 'STACKING_PROHIBITION' as const, productCode: 'P-100' }];
+    const baselineAgentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules } satisfies ConstraintSet),
+    });
+    const { service: baselineService } = createService(operation, baselineAgentPort);
+    const baselineResult = await baselineService.plan('operation-1', 'Do not stack P-100.');
+
+    const mismatchAgentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules } satisfies ConstraintSet),
+      validateIntent: vi.fn().mockResolvedValue({
+        intentMatch: false,
+        issues: ['Se uso ZONE_RESTRICTION en vez de PRODUCT_ZONE_BAN.'],
+      }),
+    });
+    const { service: mismatchService } = createService(operation, mismatchAgentPort);
+    const mismatchResult = await mismatchService.plan('operation-1', 'Do not stack P-100.');
+
+    expect(mismatchResult.intentValidation).toEqual({
+      intentMatch: false,
+      issues: ['Se uso ZONE_RESTRICTION en vez de PRODUCT_ZONE_BAN.'],
+    });
+    // ADVISORY ONLY: same appliedRules and the exact same plan as the baseline where intentMatch was true.
+    expect(mismatchResult.appliedRules).toEqual(baselineResult.appliedRules);
+    expect(mismatchResult.plan).toEqual(baselineResult.plan);
+  });
+
+  it('is called only ONCE using attempt 1\'s constraints, even when the self-correcting loop revises on later attempts', async () => {
+    const operation = createNarrowZoneOperation();
+    const agentPort = mockAgentPort({
+      planConstraints: vi.fn().mockResolvedValue({
+        version: 1,
+        hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+      } satisfies ConstraintSet),
+      reviseConstraints: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } satisfies ConstraintSet),
+    });
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'Perfiles no pueden ir del lado de la puerta.');
+
+    expect(result.attempts).toBe(2);
+    expect(agentPort.reviseConstraints).toHaveBeenCalledTimes(1);
+    expect(agentPort.validateIntent).toHaveBeenCalledTimes(1);
+
+    const [params] = (agentPort.validateIntent as ReturnType<typeof vi.fn>).mock.calls[0];
+    // Attempt 1's constraints (the over-restrictive PRODUCT_ZONE_BAN), NOT the revised (empty) attempt-2 constraints.
+    expect(params.constraints).toEqual({
+      version: 1,
+      hardRules: [{ type: 'PRODUCT_ZONE_BAN', productCode: 'P-100', zone: SharedTruckZoneType.DOOR_SIDE }],
+    });
+  });
+
+  it('skips validateIntent and omits `intentValidation` when attempt 1 has zero applied rules (nothing to check intent against)', async () => {
+    const operation = createOperation();
+    const agentPort = mockAgentPort();
+    const { service } = createService(operation, agentPort);
+
+    const result = await service.plan('operation-1', 'No rules.');
+
+    expect(agentPort.validateIntent).not.toHaveBeenCalled();
+    expect(result.intentValidation).toBeUndefined();
+    expect('intentValidation' in result).toBe(false);
   });
 });

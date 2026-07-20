@@ -290,3 +290,58 @@ describe('DeepSeekToolUseAdapter.diagnoseUnresolvedPlan (DIAGNOSIS agent, no too
     expect(payload.problems).toEqual(problems);
   });
 });
+
+describe('DeepSeekToolUseAdapter.validateIntent (VALIDATION agent, advisory, no tool needed — plain chatCompletion)', () => {
+  const constraints: ConstraintSet = {
+    version: 1,
+    hardRules: [{ type: 'ZONE_RESTRICTION', productCode: 'P-100', zone: SharedTruckZoneType.CABIN_SIDE }],
+  };
+
+  it('returns the plain chatCompletion response parsed as IntentValidation and never calls chatCompletionWithTools', async () => {
+    const client = mockClient({ chatCompletion: JSON.stringify({ intentMatch: true, issues: [] }) });
+    const adapter = new DeepSeekToolUseAdapter(client);
+
+    const result = await adapter.validateIntent({ rulesText: 'r', constraints, catalogContext });
+
+    expect(result).toEqual({ intentMatch: true, issues: [] });
+    expect(client.chatCompletion).toHaveBeenCalledTimes(1);
+    expect(client.chatCompletionWithTools).not.toHaveBeenCalled();
+  });
+
+  it('sends the same Spanish reviewer system prompt as DeepSeekJsonAdapter, distinguishing ZONE_RESTRICTION from PRODUCT_ZONE_BAN', async () => {
+    const client = mockClient({ chatCompletion: JSON.stringify({ intentMatch: true, issues: [] }) });
+    const adapter = new DeepSeekToolUseAdapter(client);
+
+    await adapter.validateIntent({ rulesText: 'r', constraints, catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const systemMessage = params.messages.find((message: { role: string }) => message.role === 'system');
+    const content: string = systemMessage.content;
+
+    expect(content.toLowerCase()).toContain('espanol');
+    expect(content).toContain('ZONE_RESTRICTION');
+    expect(content).toContain('PRODUCT_ZONE_BAN');
+  });
+
+  it('includes the operator rules and the extracted constraints in the user message', async () => {
+    const client = mockClient({ chatCompletion: JSON.stringify({ intentMatch: true, issues: [] }) });
+    const adapter = new DeepSeekToolUseAdapter(client);
+
+    await adapter.validateIntent({ rulesText: 'Any rule.', constraints, catalogContext });
+
+    const [params] = client.chatCompletion.mock.calls[0];
+    const userMessage = params.messages.find((message: { role: string }) => message.role === 'user');
+    const payload = JSON.parse(userMessage.content);
+
+    expect(payload.operatorRules).toBe('Any rule.');
+    expect(payload.extractedConstraints).toEqual(constraints.hardRules);
+  });
+
+  it('rejects with a typed IntentValidationParseError when the response is not valid JSON', async () => {
+    const client = mockClient({ chatCompletion: 'not json {' });
+    const adapter = new DeepSeekToolUseAdapter(client);
+
+    const error = await adapter.validateIntent({ rulesText: 'r', constraints, catalogContext }).catch((e: unknown) => e);
+    expect((error as Error).name).toBe('IntentValidationParseError');
+  });
+});

@@ -5,9 +5,11 @@ import type {
   CatalogContext,
   DiagnoseUnresolvedPlanParams,
   ExplainPlanParams,
+  IntentValidation,
   PlanConstraintsParams,
   PlanProblems,
   ReviseConstraintsParams,
+  ValidateIntentParams,
 } from '../ports/agent.port';
 import { parseAndValidateConstraintSet } from './constraint-set-parser';
 import {
@@ -16,8 +18,10 @@ import {
   formatCatalogContextLines,
   REVISION_SYSTEM_PROMPT_ADDENDUM,
   SYSTEM_PROMPT_HEADER,
+  VALIDATE_INTENT_SYSTEM_PROMPT,
 } from './deepseek-json.adapter';
 import { DeepSeekNoToolCallError, type DeepSeekChatMessage, type DeepSeekClient, type DeepSeekToolDefinition } from './deepseek.client';
+import { parseIntentValidation } from './intent-validation-parser';
 
 /**
  * loading-agent-llm — REAL `AgentPort` implementation using OpenAI-compatible
@@ -215,6 +219,22 @@ export class DeepSeekToolUseAdapter implements AgentPort {
     return this.client.chatCompletion({ messages });
   }
 
+  /**
+   * VALIDATION agent — ADVISORY ONLY, small JSON payload (not a
+   * `ConstraintSet`), no tool needed even on this tool-use adapter — plain
+   * `chatCompletion` with the exact same Spanish reviewer system prompt as
+   * `DeepSeekJsonAdapter`, parsed via `parseIntentValidation`.
+   */
+  async validateIntent({ rulesText, constraints, catalogContext }: ValidateIntentParams): Promise<IntentValidation> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: this.buildValidateIntentSystemPrompt(catalogContext) },
+      { role: 'user', content: this.buildValidateIntentUserPrompt(rulesText, constraints) },
+    ];
+
+    const content = await this.client.chatCompletion({ messages });
+    return parseIntentValidation(content);
+  }
+
   /** Forces `SET_CONSTRAINTS_TOOL` via `tool_choice`, then runs the arguments through the shared parse+validate gate. */
   private async callSetConstraintsTool(messages: DeepSeekChatMessage[]): Promise<ConstraintSet> {
     let argumentsJson: string;
@@ -269,6 +289,18 @@ export class DeepSeekToolUseAdapter implements AgentPort {
       appliedRules: constraints.hardRules,
       problems,
       planMetrics: plan.metrics,
+    });
+  }
+
+  /** VALIDATION agent — same catalog-injection convention as the other prompts. */
+  private buildValidateIntentSystemPrompt(catalogContext: CatalogContext): string {
+    return [VALIDATE_INTENT_SYSTEM_PROMPT, ...formatCatalogContextLines(catalogContext)].join('\n');
+  }
+
+  private buildValidateIntentUserPrompt(rulesText: string, constraints: ConstraintSet): string {
+    return JSON.stringify({
+      operatorRules: rulesText,
+      extractedConstraints: constraints.hardRules,
     });
   }
 }

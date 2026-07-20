@@ -6,11 +6,14 @@ import type {
   CatalogContext,
   DiagnoseUnresolvedPlanParams,
   ExplainPlanParams,
+  IntentValidation,
   PlanConstraintsParams,
   PlanProblems,
   ReviseConstraintsParams,
+  ValidateIntentParams,
 } from '../ports/agent.port';
 import { ConstraintSetParseError, ConstraintSetValidationError, parseAndValidateConstraintSet } from './constraint-set-parser';
+import { parseIntentValidation } from './intent-validation-parser';
 import type { DeepSeekChatMessage, DeepSeekClient } from './deepseek.client';
 
 /**
@@ -38,6 +41,17 @@ import type { DeepSeekChatMessage, DeepSeekClient } from './deepseek.client';
  * no schema to validate — this is prose for a human, not a `ConstraintSet`)
  * with a dedicated Spanish system prompt framing the model as a logistics
  * diagnostician.
+ *
+ * VALIDATION agent — `validateIntent` is an ADVISORY ONLY semantic/intent
+ * check, called once by `PlanningAgentService.plan` on the FIRST successful
+ * (gate-validated) `ConstraintSet`, before the self-correcting re-plan
+ * loop's revisions. It uses plain `chatCompletion` (a SMALL JSON payload,
+ * `{ intentMatch, issues }` — not the full `ConstraintSet` schema, so it
+ * reuses `parseIntentValidation`/`intent-validation-parser.ts` rather than
+ * `parseAndValidateConstraintSet`) with a dedicated Spanish reviewer system
+ * prompt that watches especially for the classic ZONE_RESTRICTION
+ * (confine-TO) vs PRODUCT_ZONE_BAN (ban-FROM) inversion, and product/zone
+ * misreads. Never used to alter the constraints or the plan.
  */
 
 export { ConstraintSetParseError, ConstraintSetValidationError };
@@ -93,6 +107,29 @@ export const DIAGNOSE_UNRESOLVED_PLAN_SYSTEM_PROMPT = [
   '2) La causa mas probable: el camion esta efectivamente lleno (sin espacio o capacidad disponible) o una regla del operario es demasiado restrictiva.',
   '3) UNA sugerencia concreta y accionable (por ejemplo: relajar una regla especifica, usar un camion mas grande, o dividir la carga en dos viajes).',
   'Se conciso, directo y practico. Nada de relleno ni disculpas. Responde SIEMPRE en espanol.',
+].join('\n');
+
+/**
+ * VALIDATION agent — reused verbatim by `DeepSeekToolUseAdapter.validateIntent`
+ * and by `ValidationAgent` (no tool needed, small JSON payload for a
+ * deterministic parser, not a human). Frames the model as a REVIEWER whose
+ * only job is to compare the operator's original free-text rules against the
+ * `ConstraintSet` a DIFFERENT agent already extracted from them, and flag any
+ * discrepancy — this is a second, independent pass, never a replacement for
+ * the structural/catalog validation gate.
+ */
+export const VALIDATE_INTENT_SYSTEM_PROMPT = [
+  'Sos un revisor experto en logistica de cargas.',
+  'Tu unica tarea es verificar si un ConstraintSet (reglas duras estructuradas) extraido de las instrucciones de un operario refleja fielmente su intencion original. No proponer un ConstraintSet nuevo ni corregir nada — solo evaluar y reportar.',
+  'Se te da el texto original del operario y el ConstraintSet ya extraido. Compara ambos con cuidado.',
+  'Presta ESPECIAL atencion a la inversion clasica entre ZONE_RESTRICTION y PRODUCT_ZONE_BAN, que son OPUESTAS:',
+  '  ZONE_RESTRICTION CONFINA el producto A esa zona (solo puede ir ahi).',
+  '  PRODUCT_ZONE_BAN PROHIBE el producto DE esa zona (puede ir a cualquier otro lado).',
+  '  Si el operario dijo "no puede ir en Z" / "prohibido en Z" y el ConstraintSet usa ZONE_RESTRICTION, o si el operario dijo "debe ir solo en Z" / "tiene que quedar en Z" y el ConstraintSet usa PRODUCT_ZONE_BAN, es una inversion — reportala SIEMPRE como problema.',
+  'Tambien revisa: productos o familias mal identificados (codigo o familia equivocados), zonas mal identificadas, reglas que el operario pidio pero no aparecen en el ConstraintSet (omision), y reglas que aparecen en el ConstraintSet pero el operario nunca pidio (invencion).',
+  'Respondé con UNICAMENTE un objeto JSON con este esquema exacto — sin prosa, sin markdown, sin explicacion adicional:',
+  '{ "intentMatch": boolean, "issues": string[] }',
+  '"intentMatch" es true UNICAMENTE si el ConstraintSet refleja fielmente la intencion del operario, sin ninguna discrepancia. "issues" es un array de strings, cada uno EN ESPANOL (espanol) describiendo una discrepancia concreta encontrada; DEBE estar vacio cuando intentMatch es true. Responde SIEMPRE en espanol.',
 ].join('\n');
 
 /** Formats the real catalog into prompt lines — shared by both `AgentPort` implementations so neither hallucinates against a stale/hand-copied catalog format. */
@@ -152,6 +189,22 @@ export class DeepSeekJsonAdapter implements AgentPort {
     return this.client.chatCompletion({ messages });
   }
 
+  /**
+   * VALIDATION agent — ADVISORY ONLY. Free-standing reviewer pass; never
+   * called with the intent of altering `constraints`. Plain `chatCompletion`
+   * (small JSON payload, not a `ConstraintSet`), parsed via
+   * `parseIntentValidation`.
+   */
+  async validateIntent({ rulesText, constraints, catalogContext }: ValidateIntentParams): Promise<IntentValidation> {
+    const messages: DeepSeekChatMessage[] = [
+      { role: 'system', content: this.buildValidateIntentSystemPrompt(catalogContext) },
+      { role: 'user', content: this.buildValidateIntentUserPrompt(rulesText, constraints) },
+    ];
+
+    const content = await this.client.chatCompletion({ messages });
+    return parseIntentValidation(content);
+  }
+
   private buildSystemPrompt(catalogContext: CatalogContext): string {
     return [SYSTEM_PROMPT_HEADER, ...formatCatalogContextLines(catalogContext)].join('\n');
   }
@@ -196,6 +249,18 @@ export class DeepSeekJsonAdapter implements AgentPort {
       appliedRules: constraints.hardRules,
       problems,
       planMetrics: plan.metrics,
+    });
+  }
+
+  /** VALIDATION agent — same catalog-injection convention as the other prompts. */
+  private buildValidateIntentSystemPrompt(catalogContext: CatalogContext): string {
+    return [VALIDATE_INTENT_SYSTEM_PROMPT, ...formatCatalogContextLines(catalogContext)].join('\n');
+  }
+
+  private buildValidateIntentUserPrompt(rulesText: string, constraints: ConstraintSet): string {
+    return JSON.stringify({
+      operatorRules: rulesText,
+      extractedConstraints: constraints.hardRules,
     });
   }
 }

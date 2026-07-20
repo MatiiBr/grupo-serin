@@ -7,7 +7,7 @@ import type { LoadingPlannerInput, LoadingPlannerResult } from '../domain/loadin
 import { operationToPlannerInput, OperationForPlannerInput } from '../loading-plans/operation-to-planner-input';
 import { PrismaService } from '../prisma/prisma.service';
 import { deepseekConfig } from './config/deepseek.config';
-import { AGENT_PORT, type AgentPort, type CatalogContext, type PlanProblems } from './ports/agent.port';
+import { AGENT_PORT, type AgentPort, type CatalogContext, type IntentValidation, type PlanProblems } from './ports/agent.port';
 import { ConstraintSetStructuralError, DroppedRule, validateConstraintSet } from './validate-constraint-set';
 
 /**
@@ -29,6 +29,16 @@ import { ConstraintSetStructuralError, DroppedRule, validateConstraintSet } from
  * Spanish diagnosis is included as `diagnosis` in the preview. If the BEST
  * attempt IS clean, `diagnoseUnresolvedPlan` is never called and `diagnosis`
  * is omitted. `explainPlan` still runs on the best plan either way.
+ *
+ * VALIDATION agent — ADVISORY ONLY. `agentPort.validateIntent` is called
+ * exactly ONCE per `plan()` call, right after attempt 1's gate-validated
+ * `ConstraintSet` is known (i.e. on the FIRST successful extraction that
+ * captures the operator's intent), BEFORE any self-correcting-replan-loop
+ * revision. Its result is surfaced as `intentValidation` on the preview but
+ * is NEVER used to alter the applied constraints or the generated plan —
+ * later attempts' revised constraints are never re-checked. Skipped (and
+ * `intentValidation` omitted) when attempt 1 applies zero rules — there is
+ * nothing to check the extracted intent against.
  */
 
 export interface ResolutionLogEntry {
@@ -50,6 +60,12 @@ export interface PlanningAgentPreview {
    * (unplaced items and/or critical alerts). Absent when the plan is clean.
    */
   diagnosis?: string;
+  /**
+   * VALIDATION agent — ADVISORY ONLY, present ONLY when attempt 1 applied at
+   * least one rule (otherwise there is nothing to check intent against, see
+   * `runIntentValidation`). Never used to alter `appliedRules`/`plan`.
+   */
+  intentValidation?: IntentValidation;
 }
 
 interface PlanAttempt {
@@ -103,7 +119,7 @@ export class PlanningAgentService {
     const plannerInput = operationToPlannerInput(operation);
     const catalogContext = this.buildCatalogContext(operation);
 
-    const { best, resolutionLog } = await this.runPlanningLoop(rulesText, plannerInput, catalogContext);
+    const { best, resolutionLog, intentValidation } = await this.runPlanningLoop(rulesText, plannerInput, catalogContext);
     const explanation = await this.agentPort.explainPlan({ plan: best.plan, constraints: best.constraintSet });
 
     const preview: PlanningAgentPreview = {
@@ -114,6 +130,10 @@ export class PlanningAgentService {
       attempts: resolutionLog.length,
       resolutionLog,
     };
+
+    if (intentValidation) {
+      preview.intentValidation = intentValidation;
+    }
 
     const isClean = best.problems.unplaced.length === 0 && best.problems.criticalAlerts.length === 0;
     if (!isClean) {
@@ -142,12 +162,17 @@ export class PlanningAgentService {
   private async runPlanningLoop(rulesText: string, plannerInput: LoadingPlannerInput, catalogContext: CatalogContext) {
     const resolutionLog: ResolutionLogEntry[] = [];
     let best: PlanAttempt | undefined;
+    let intentValidation: IntentValidation | undefined;
     let rawConstraintSet = await this.agentPort.planConstraints({ rulesText, catalogContext });
 
     for (let attempt = 1; attempt <= this.maxPlanAttempts; attempt += 1) {
       const current = await this.runAttempt(rawConstraintSet, plannerInput, catalogContext);
       if (!best || this.isBetterAttempt(current, best)) {
         best = current;
+      }
+
+      if (attempt === 1) {
+        intentValidation = await this.runIntentValidation(rulesText, current.constraintSet, catalogContext);
       }
 
       const clean = current.problems.unplaced.length === 0 && current.problems.criticalAlerts.length === 0;
@@ -169,7 +194,24 @@ export class PlanningAgentService {
       });
     }
 
-    return { best: best!, resolutionLog };
+    return { best: best!, resolutionLog, intentValidation };
+  }
+
+  /**
+   * VALIDATION agent — ADVISORY ONLY, called exactly once per `plan()`, on
+   * attempt 1's gate-validated `ConstraintSet` (the constraints that capture
+   * the operator's intent), before any re-plan-loop revision. Skipped when
+   * attempt 1 applies zero rules — there is nothing to check an extracted
+   * intent against, and every existing "no rules" scenario stays a
+   * single plain `planConstraints`+`explainPlan` call, unchanged.
+   */
+  private async runIntentValidation(
+    rulesText: string,
+    constraints: ConstraintSet,
+    catalogContext: CatalogContext,
+  ): Promise<IntentValidation | undefined> {
+    if (constraints.hardRules.length === 0) return undefined;
+    return this.agentPort.validateIntent({ rulesText, constraints, catalogContext });
   }
 
   private async runAttempt(

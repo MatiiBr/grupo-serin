@@ -19,10 +19,11 @@ import { registerAs } from '@nestjs/config';
  * — any unrecognized value falls back to `'json'` rather than failing to
  * boot.
  *
- * multi-agent refactor — `agents.{extract,revise,explain,diagnose}` carries
- * PER-ROLE model/temperature overrides for the four `agents/` role-agents
- * (`RuleExtractionAgent`/`RulePatchAgent`/`PlanExplanationAgent`/
- * `DiagnosisAgent`, wired together by `AgentTeam`). Each role's `model`
+ * multi-agent refactor + VALIDATION agent — `agents.{extract,revise,explain,
+ * diagnose,validate}` carries PER-ROLE model/temperature overrides for the
+ * five `agents/` role-agents (`RuleExtractionAgent`/`RulePatchAgent`/
+ * `PlanExplanationAgent`/`DiagnosisAgent`/`ValidationAgent`, wired together by
+ * `AgentTeam`). Each role's `model`
  * defaults to the base `DEEPSEEK_MODEL` and its `temperature` defaults to the
  * base `DEEPSEEK_TEMPERATURE` (itself optional and undefined unless set) when
  * its own `DEEPSEEK_MODEL_*`/`DEEPSEEK_TEMPERATURE_*` env var is unset — so
@@ -45,6 +46,8 @@ export interface DeepSeekAgentsConfig {
   revise: DeepSeekAgentRoleConfig;
   explain: DeepSeekAgentRoleConfig;
   diagnose: DeepSeekAgentRoleConfig;
+  /** VALIDATION agent — ADVISORY ONLY intent-match check (`ValidationAgent`). */
+  validate: DeepSeekAgentRoleConfig;
 }
 
 function parseIntEnv(value: string | undefined, fallback: number): number {
@@ -85,6 +88,7 @@ export const deepseekConfig = registerAs('deepseek', () => {
     revise: resolveRoleConfig(model, temperature, process.env.DEEPSEEK_MODEL_REVISE, process.env.DEEPSEEK_TEMPERATURE_REVISE),
     explain: resolveRoleConfig(model, temperature, process.env.DEEPSEEK_MODEL_EXPLAIN, process.env.DEEPSEEK_TEMPERATURE_EXPLAIN),
     diagnose: resolveRoleConfig(model, temperature, process.env.DEEPSEEK_MODEL_DIAGNOSE, process.env.DEEPSEEK_TEMPERATURE_DIAGNOSE),
+    validate: resolveRoleConfig(model, temperature, process.env.DEEPSEEK_MODEL_VALIDATE, process.env.DEEPSEEK_TEMPERATURE_VALIDATE),
   };
 
   return {

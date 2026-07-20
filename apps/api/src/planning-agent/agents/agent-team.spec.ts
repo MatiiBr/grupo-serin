@@ -27,6 +27,7 @@ function buildMembers() {
     patch: { revise: vi.fn().mockResolvedValue({ version: 1, hardRules: [] } as ConstraintSet) },
     explanation: { explain: vi.fn().mockResolvedValue('explanation text') },
     diagnosis: { diagnose: vi.fn().mockResolvedValue('diagnosis text') },
+    validation: { validate: vi.fn().mockResolvedValue({ intentMatch: true, issues: [] }) },
   };
 }
 
@@ -78,5 +79,17 @@ describe('AgentTeam (multi-agent refactor)', () => {
 
     expect(result).toBe('diagnosis text');
     expect(members.diagnosis.diagnose).toHaveBeenCalledWith({ rulesText: 'r', constraints, plan, problems, catalogContext });
+  });
+
+  it('delegates validateIntent to the validation agent (VALIDATION agent, advisory)', async () => {
+    const members = buildMembers();
+    const team = new AgentTeam(members);
+    const constraints: ConstraintSet = { version: 1, hardRules: [] };
+
+    const result = await team.validateIntent({ rulesText: 'r', constraints, catalogContext });
+
+    expect(result).toEqual({ intentMatch: true, issues: [] });
+    expect(members.validation.validate).toHaveBeenCalledWith({ rulesText: 'r', constraints, catalogContext });
+    expect(members.extraction.extract).not.toHaveBeenCalled();
   });
 });

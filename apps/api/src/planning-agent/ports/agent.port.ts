@@ -65,6 +65,24 @@ export interface DiagnoseUnresolvedPlanParams {
   catalogContext: CatalogContext;
 }
 
+/**
+ * VALIDATION agent — ADVISORY ONLY. `intentMatch` is true when the extracted
+ * `ConstraintSet` faithfully reflects the operator's free-text rules;
+ * `issues` is a list of Spanish-language discrepancies (empty when it
+ * matches). Never used to alter the constraints or the plan — surfaced to
+ * the caller as-is so a human can review it.
+ */
+export interface IntentValidation {
+  intentMatch: boolean;
+  issues: string[];
+}
+
+export interface ValidateIntentParams {
+  rulesText: string;
+  constraints: ConstraintSet;
+  catalogContext: CatalogContext;
+}
+
 export interface AgentPort {
   /** Turns free-text operator rules into a structured (not-yet-validated) `ConstraintSet`. */
   planConstraints(params: PlanConstraintsParams): Promise<ConstraintSet>;
@@ -85,6 +103,16 @@ export interface AgentPort {
    * ONE concrete, actionable suggestion.
    */
   diagnoseUnresolvedPlan(params: DiagnoseUnresolvedPlanParams): Promise<string>;
+  /**
+   * VALIDATION agent — ADVISORY ONLY semantic/intent check that runs
+   * alongside (never in place of) the deterministic structural/catalog gate.
+   * Checks whether the extracted `ConstraintSet` faithfully captures the
+   * operator's intent (classic pitfall: ZONE_RESTRICTION-confine-TO vs
+   * PRODUCT_ZONE_BAN-ban-FROM inversion, or a product/zone misread). The
+   * caller MUST surface the result but MUST NOT use it to alter the
+   * constraints or the generated plan.
+   */
+  validateIntent(params: ValidateIntentParams): Promise<IntentValidation>;
 }
 
 /**
