@@ -4,6 +4,7 @@ import { DeepSeekClient } from './adapters/deepseek.client';
 import { buildAgentTeam } from './agents/agent-team.factory';
 import { deepseekConfig } from './config/deepseek.config';
 import { AGENT_PORT } from './ports/agent.port';
+import { PlanAgentJobService } from './plan-agent-job.service';
 import { PlanningAgentController } from './planning-agent.controller';
 import { PlanningAgentService } from './planning-agent.service';
 
@@ -46,6 +47,9 @@ import { PlanningAgentService } from './planning-agent.service';
       inject: [DeepSeekClient, deepseekConfig.KEY],
     },
     PlanningAgentService,
+    // ASYNC job flow — in-memory background runner for the sync `plan()` call,
+    // exposed via `POST .../plan-agent/jobs` + `GET .../plan-agent/jobs/:jobId`.
+    PlanAgentJobService,
   ],
 })
 export class PlanningAgentModule {}
