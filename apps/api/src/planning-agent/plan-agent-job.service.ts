@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { PlanAgentJobStatus as PrismaPlanAgentJobStatus, type Prisma } from '@prisma/client';
+import { PlanAgentJobStatus as PrismaPlanAgentJobStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { PlanningAgentService, type PlanningAgentPreview } from './planning-agent.service';
+import { PlanAgentQueue } from './plan-agent-queue';
+import type { PlanningAgentPreview } from './planning-agent.service';
 
 export type PlanAgentJobStatus = 'running' | 'succeeded' | 'failed';
 
@@ -32,55 +33,51 @@ const STATUS_TO_DOMAIN: Record<PrismaPlanAgentJobStatus, PlanAgentJobStatus> = {
  * immediately (202) while `PlanningAgentService.plan()` (the self-correcting
  * re-plan loop: several sequential DeepSeek calls, can exceed 5 min) keeps
  * running in the background, instead of blocking the HTTP request until it
- * settles. `start()` fires `plan()` WITHOUT awaiting it and returns the
- * jobId right away; the caller polls `GET .../plan-agent/jobs/:jobId`.
+ * settles. The caller polls `GET .../plan-agent/jobs/:jobId`.
  *
- * STATE is durable — backed by the `PlanAgentJob` Prisma table (Postgres,
- * the existing datastore — no new infra). Job status/result/error survive a
- * process restart and are queryable directly in the DB. The background
- * EXECUTION is still in-process/single-instance: `plan()` runs on whichever
- * API instance received the `start()` call, and if that instance crashes or
- * restarts mid-run, the job row is left stuck in RUNNING with nothing to
- * resume it. True multi-instance/worker execution (so any instance can pick
- * up and finish a job) would need a real queue (e.g. BullMQ + Redis, or a
- * Postgres-based worker polling this same table) — a named follow-up, not
- * implemented here.
+ * STATE is durable — backed by the `PlanAgentJob` Prisma table (Postgres),
+ * unchanged since Batch 12: job status/result/error survive a process
+ * restart and are queryable directly in the DB.
+ *
+ * Batch 13 — EXECUTION is now a real BullMQ + Redis queue/worker instead of
+ * Batch 12's in-process `.then(() => planningAgentService.plan(...))` chain.
+ * `start()` only (a) creates the RUNNING row and (b) hands the job to
+ * `PlanAgentQueue`; it no longer calls `planningAgentService.plan()` itself
+ * — `PlanAgentWorker` (a separate provider, possibly running on a different
+ * API instance) owns that now. This closes the multi-instance/crash-recovery
+ * gap flagged in Batch 12's comment: any instance running the worker can
+ * pick up and finish a job enqueued by any other instance.
  */
 @Injectable()
 export class PlanAgentJobService {
   // Test-only hook (`whenSettled`) — stays in-memory on purpose: it exists so
-  // specs can deterministically await the background write, it is not part
-  // of the durable job STATE (which lives entirely in `PlanAgentJob` rows)
-  // and is never read by `get()`.
+  // specs can deterministically await the background `create` + `enqueue`
+  // chain inside `start()`. Repurposed from Batch 12: it no longer waits for
+  // `plan()` to run (that happens in `PlanAgentWorker`, out of process) — it
+  // now resolves once the job row has been created AND handed to the queue.
+  // It is not part of the durable job STATE (which lives entirely in
+  // `PlanAgentJob` rows) and is never read by `get()`.
   private readonly settlement = new Map<string, Promise<void>>();
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly planningAgentService: PlanningAgentService,
+    private readonly queue: PlanAgentQueue,
   ) {}
 
   start(operationId: string, rulesText: string): PlanAgentJobStarted {
     const jobId = randomUUID();
 
-    const settled = this.prisma.planAgentJob
+    const enqueued = this.prisma.planAgentJob
       .create({ data: { id: jobId, operationId, status: PrismaPlanAgentJobStatus.RUNNING } })
-      .then(() => this.planningAgentService.plan(operationId, rulesText))
-      .then(
-        async (result) => {
-          await this.persistSucceeded(jobId, result);
-        },
-        async (error: unknown) => {
-          await this.persistFailed(jobId, error);
-        },
-      )
-      // The background settle must never throw out of `start()` — any
-      // failure writing the final status (e.g. a transient DB error) is
-      // swallowed here; the job row is left in whatever state the last
-      // successful write produced (RUNNING, if even the failure write
-      // itself could not land).
+      .then(() => this.queue.add('plan', { jobId, operationId, rulesText }))
+      .then(() => undefined)
+      // The background create+enqueue chain must never throw out of
+      // `start()` — any failure here (e.g. a transient DB or Redis error) is
+      // swallowed; the job row is left in whatever state the last successful
+      // write produced (RUNNING, or nonexistent if even `create` failed).
       .catch(() => undefined);
 
-    this.settlement.set(jobId, settled);
+    this.settlement.set(jobId, enqueued);
 
     return { jobId, status: 'running' };
   }
@@ -100,30 +97,8 @@ export class PlanAgentJobService {
     };
   }
 
-  /** Test-only hook: resolves once the background `plan()` call for `jobId` has settled (succeeded or failed). */
+  /** Test-only hook: resolves once `start()`'s create+enqueue chain for `jobId` has completed. */
   whenSettled(jobId: string): Promise<void> {
     return this.settlement.get(jobId) ?? Promise.resolve();
-  }
-
-  private async persistSucceeded(jobId: string, result: PlanningAgentPreview): Promise<void> {
-    // `result` may hold non-plain-JSON values in principle (the preview is a
-    // hand-built domain object, not a DTO); round-trip it through JSON so
-    // only Prisma `Json`-compatible data is ever written.
-    const serializedResult = JSON.parse(JSON.stringify(result)) as Prisma.InputJsonValue;
-    await this.prisma.planAgentJob.update({
-      where: { id: jobId },
-      data: { status: PrismaPlanAgentJobStatus.SUCCEEDED, result: serializedResult },
-    });
-  }
-
-  private async persistFailed(jobId: string, error: unknown): Promise<void> {
-    await this.prisma.planAgentJob.update({
-      where: { id: jobId },
-      data: {
-        status: PrismaPlanAgentJobStatus.FAILED,
-        error: error instanceof Error ? error.message : String(error),
-        errorName: error instanceof Error ? error.name : undefined,
-      },
-    });
   }
 }

@@ -20,8 +20,10 @@
     "@nestjs/platform-express": "latest",
     "@nestjs/swagger": "latest",
     "@prisma/client": "^6.19.3",
+    "bullmq": "^5.80.9",
     "class-transformer": "latest",
     "class-validator": "latest",
+    "ioredis": "^5.11.1",
     "reflect-metadata": "latest",
     "rxjs": "latest"
   },

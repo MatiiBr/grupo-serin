@@ -3,8 +3,11 @@ import { ConfigModule, ConfigType } from '@nestjs/config';
 import { DeepSeekClient } from './adapters/deepseek.client';
 import { buildAgentTeam } from './agents/agent-team.factory';
 import { deepseekConfig } from './config/deepseek.config';
+import { redisConfig } from './config/redis.config';
 import { AGENT_PORT } from './ports/agent.port';
 import { PlanAgentJobService } from './plan-agent-job.service';
+import { PlanAgentQueue } from './plan-agent-queue';
+import { PlanAgentWorker } from './plan-agent-worker';
 import { PlanningAgentController } from './planning-agent.controller';
 import { PlanningAgentService } from './planning-agent.service';
 
@@ -29,9 +32,18 @@ import { PlanningAgentService } from './planning-agent.service';
  * `AgentPort`, never on a concrete adapter. Nothing changes behaviorally for
  * existing deployments unless `DEEPSEEK_ADAPTER=tooluse` and/or a per-role
  * `DEEPSEEK_MODEL_*`/`DEEPSEEK_TEMPERATURE_*` override is set explicitly.
+ *
+ * Batch 13 — `ConfigModule.forFeature(redisConfig)` registers the
+ * `REDIS_URL`/`REDIS_HOST`/`REDIS_PORT` namespace; `PlanAgentQueue`
+ * (producer) and `PlanAgentWorker` (consumer/executor) are both wired here.
+ * Neither opens a real Redis connection at DI-instantiation time (see their
+ * class comments) — only `PlanAgentQueue.add()` or `PlanAgentWorker
+ * .onModuleInit()` do, so `planning-agent.module.spec.ts`'s `.compile()`
+ * (which never calls `.init()`) stays Redis-free with no provider overrides
+ * needed for either of them.
  */
 @Module({
-  imports: [ConfigModule.forFeature(deepseekConfig)],
+  imports: [ConfigModule.forFeature(deepseekConfig), ConfigModule.forFeature(redisConfig)],
   controllers: [PlanningAgentController],
   providers: [
     {
@@ -47,9 +59,14 @@ import { PlanningAgentService } from './planning-agent.service';
       inject: [DeepSeekClient, deepseekConfig.KEY],
     },
     PlanningAgentService,
-    // ASYNC job flow — in-memory background runner for the sync `plan()` call,
-    // exposed via `POST .../plan-agent/jobs` + `GET .../plan-agent/jobs/:jobId`.
+    // ASYNC job flow — `PlanAgentJobService` creates the durable row and
+    // enqueues via `PlanAgentQueue`; `PlanAgentWorker` is the BullMQ consumer
+    // that actually runs `PlanningAgentService.plan()` and persists the
+    // result. Exposed via `POST .../plan-agent/jobs` + `GET
+    // .../plan-agent/jobs/:jobId`.
     PlanAgentJobService,
+    PlanAgentQueue,
+    PlanAgentWorker,
   ],
 })
 export class PlanningAgentModule {}
