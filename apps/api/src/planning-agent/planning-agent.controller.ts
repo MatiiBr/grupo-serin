@@ -50,8 +50,8 @@ export class PlanningAgentController {
   @Get('operations/:operationId/plan-agent/jobs/:jobId')
   @ApiOkResponse({ description: 'Returns the status (and result/error once settled) of a background plan-agent job.' })
   @ApiNotFoundResponse({ description: 'No job exists with the given jobId.' })
-  getJob(@Param('operationId', ParseUUIDPipe) operationId: string, @Param('jobId') jobId: string) {
-    const job = this.planAgentJobService.get(jobId);
+  async getJob(@Param('operationId', ParseUUIDPipe) operationId: string, @Param('jobId') jobId: string) {
+    const job = await this.planAgentJobService.get(jobId);
     if (!job) {
       throw new NotFoundException(`No plan-agent job found for id "${jobId}".`);
     }

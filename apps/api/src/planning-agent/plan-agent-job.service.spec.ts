@@ -1,13 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { PlanAgentJobStatus as PrismaPlanAgentJobStatus } from '@prisma/client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PrismaService } from '../prisma/prisma.service';
 import { PlanAgentJobService } from './plan-agent-job.service';
 import type { PlanningAgentPreview } from './planning-agent.service';
 
 /**
- * loading-agent-llm async job flow — `PlanAgentJobService` is an in-memory,
- * single-instance job runner that lets `POST .../plan-agent/jobs` return
- * immediately (202) while `PlanningAgentService.plan()` (multiple sequential
- * DeepSeek calls, can exceed 5 min) keeps running in the background.
- * `PlanningAgentService` is mocked here — no real solver/DeepSeek/network.
+ * loading-agent-llm async job flow — `PlanAgentJobService` is now backed by a
+ * durable `PlanAgentJob` Prisma table (state survives a process restart and
+ * is queryable), while the background `plan()` EXECUTION stays in-process —
+ * see the class-level comment in `plan-agent-job.service.ts`. `PrismaService`
+ * and `PlanningAgentService` are both mocked here — no real DB/DeepSeek/network.
  */
 describe('PlanAgentJobService', () => {
   function buildPreview(overrides: Partial<PlanningAgentPreview> = {}): PlanningAgentPreview {
@@ -22,22 +24,41 @@ describe('PlanAgentJobService', () => {
     };
   }
 
-  it('start() returns a jobId immediately and the job is running before plan() settles', () => {
+  function createPrisma() {
+    return {
+      planAgentJob: {
+        create: vi.fn().mockResolvedValue(undefined),
+        update: vi.fn().mockResolvedValue(undefined),
+        findUnique: vi.fn(),
+      },
+    };
+  }
+
+  function createService(prisma: ReturnType<typeof createPrisma>, planningAgentService: { plan: ReturnType<typeof vi.fn> }) {
+    return new PlanAgentJobService(prisma as unknown as PrismaService, planningAgentService as never);
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('start() creates a RUNNING job row and returns the jobId immediately, before plan() settles', () => {
     let resolvePlan: (value: PlanningAgentPreview) => void = () => {};
     const planningAgentService = {
       plan: vi.fn(() => new Promise<PlanningAgentPreview>((resolve) => { resolvePlan = resolve; })),
     };
-    const jobService = new PlanAgentJobService(planningAgentService as never);
+    const prisma = createPrisma();
+    const jobService = createService(prisma, planningAgentService);
 
     const result = jobService.start('op-1', 'no stacking on P-100');
 
     expect(result.status).toBe('running');
     expect(typeof result.jobId).toBe('string');
     expect(result.jobId.length).toBeGreaterThan(0);
-
-    const job = jobService.get(result.jobId);
-    expect(job?.status).toBe('running');
-    expect(job?.operationId).toBe('op-1');
+    expect(prisma.planAgentJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ id: result.jobId, operationId: 'op-1', status: PrismaPlanAgentJobStatus.RUNNING }),
+      }),
+    );
+    expect(planningAgentService.plan).not.toHaveBeenCalled();
 
     resolvePlan(buildPreview());
   });
@@ -45,19 +66,22 @@ describe('PlanAgentJobService', () => {
   it('marks the job succeeded with the resolved preview once plan() resolves', async () => {
     const preview = buildPreview({ explanation: 'agent explanation text' });
     const planningAgentService = { plan: vi.fn().mockResolvedValue(preview) };
-    const jobService = new PlanAgentJobService(planningAgentService as never);
+    const prisma = createPrisma();
+    const jobService = createService(prisma, planningAgentService);
 
     const { jobId } = jobService.start('op-2', 'keep COIL out of CABIN_SIDE');
     await jobService.whenSettled(jobId);
 
-    const job = jobService.get(jobId);
-    expect(job?.status).toBe('succeeded');
-    expect(job?.result).toEqual(preview);
+    expect(prisma.planAgentJob.update).toHaveBeenCalledWith({
+      where: { id: jobId },
+      data: { status: PrismaPlanAgentJobStatus.SUCCEEDED, result: JSON.parse(JSON.stringify(preview)) },
+    });
   });
 
-  it('marks the job failed with the error message when plan() rejects, without throwing out of start()', async () => {
+  it('marks the job failed with the error message/name when plan() rejects, without throwing out of start()', async () => {
     const planningAgentService = { plan: vi.fn().mockRejectedValue(new Error('DeepSeek is unavailable after retries were exhausted.')) };
-    const jobService = new PlanAgentJobService(planningAgentService as never);
+    const prisma = createPrisma();
+    const jobService = createService(prisma, planningAgentService);
 
     let started: { jobId: string; status: 'running' } | undefined;
     expect(() => {
@@ -66,22 +90,60 @@ describe('PlanAgentJobService', () => {
 
     await jobService.whenSettled(started!.jobId);
 
-    const job = jobService.get(started!.jobId);
-    expect(job?.status).toBe('failed');
-    expect(job?.error).toBe('DeepSeek is unavailable after retries were exhausted.');
-    expect(job?.errorName).toBe('Error');
+    expect(prisma.planAgentJob.update).toHaveBeenCalledWith({
+      where: { id: started!.jobId },
+      data: {
+        status: PrismaPlanAgentJobStatus.FAILED,
+        error: 'DeepSeek is unavailable after retries were exhausted.',
+        errorName: 'Error',
+      },
+    });
   });
 
-  it('get() returns undefined for an unknown jobId', () => {
+  it('get() returns the mapped job for a known id', async () => {
     const planningAgentService = { plan: vi.fn() };
-    const jobService = new PlanAgentJobService(planningAgentService as never);
+    const prisma = createPrisma();
+    const createdAt = new Date('2026-07-19T00:00:00.000Z');
+    const preview = buildPreview({ explanation: 'from db' });
+    prisma.planAgentJob.findUnique.mockResolvedValue({
+      id: 'job-abc',
+      operationId: 'op-9',
+      status: PrismaPlanAgentJobStatus.SUCCEEDED,
+      result: preview,
+      error: null,
+      errorName: null,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const jobService = createService(prisma, planningAgentService);
 
-    expect(jobService.get('does-not-exist')).toBeUndefined();
+    const job = await jobService.get('job-abc');
+
+    expect(job).toEqual({
+      id: 'job-abc',
+      operationId: 'op-9',
+      status: 'succeeded',
+      createdAt,
+      result: preview,
+      error: undefined,
+      errorName: undefined,
+    });
+    expect(prisma.planAgentJob.findUnique).toHaveBeenCalledWith({ where: { id: 'job-abc' } });
+  });
+
+  it('get() returns undefined for an unknown jobId', async () => {
+    const planningAgentService = { plan: vi.fn() };
+    const prisma = createPrisma();
+    prisma.planAgentJob.findUnique.mockResolvedValue(null);
+    const jobService = createService(prisma, planningAgentService);
+
+    await expect(jobService.get('does-not-exist')).resolves.toBeUndefined();
   });
 
   it('two calls to start() produce distinct jobIds', () => {
     const planningAgentService = { plan: vi.fn().mockResolvedValue(buildPreview()) };
-    const jobService = new PlanAgentJobService(planningAgentService as never);
+    const prisma = createPrisma();
+    const jobService = createService(prisma, planningAgentService);
 
     const first = jobService.start('op-5', 'rules a');
     const second = jobService.start('op-5', 'rules b');

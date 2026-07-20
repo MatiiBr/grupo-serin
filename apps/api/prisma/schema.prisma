@@ -157,6 +157,12 @@ enum AuditSource {
   API
 }
 
+enum PlanAgentJobStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
 model AuditEvent {
   id                String      @id @default(uuid())
   actor             String      @default("system")
@@ -176,6 +182,20 @@ model AuditEvent {
   @@index([relatedEntityType, relatedEntityId])
   @@index([action])
   @@index([createdAt])
+}
+
+model PlanAgentJob {
+  id          String             @id @default(uuid())
+  operationId String
+  status      PlanAgentJobStatus @default(RUNNING)
+  result      Json?
+  error       String?
+  errorName   String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([operationId])
+  @@index([status])
 }
 
 model Customer {
