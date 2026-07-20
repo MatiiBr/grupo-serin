@@ -662,8 +662,10 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
     for (let c = 0; c < cols; c += 1) {
       for (let r = 0; r < rows; r += 1) {
         const pr = Math.max(0.028, cellR * (0.5 + 0.46 * pseudoRandom(seed + c * 7.1 + r * 3.3)));
+        const jy = (pseudoRandom(seed + c * 3.1 + r * 11.7 + 5) - 0.5) * cellH * 0.45;
+        const jz = (pseudoRandom(seed + c * 8.3 + r * 2.7 + 61) - 0.5) * cellW * 0.45;
         pipes.push(
-          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * cellH, -width / 2 + (c + 0.5) * cellW]} rotation={[0, 0, Math.PI / 2]}>
+          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * cellH + jy, -width / 2 + (c + 0.5) * cellW + jz]} rotation={[0, 0, Math.PI / 2]}>
             <cylinderGeometry args={[pr, pr, length, 16]} />
             <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
           </mesh>,
@@ -698,8 +700,10 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
         const v = pseudoRandom(seed + c * 5.7 + r * 9.1);
         const sw = cellW * (0.6 + 0.34 * v);
         const sh = cellH * (0.6 + 0.34 * v);
+        const jy = (pseudoRandom(seed + c * 4.9 + r * 7.3 + 12) - 0.5) * cellH * 0.35;
+        const jz = (pseudoRandom(seed + c * 2.1 + r * 6.6 + 70) - 0.5) * cellW * 0.35;
         tubes.push(
-          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * cellH, -width / 2 + (c + 0.5) * cellW]}>
+          <mesh key={`${c}-${r}`} castShadow receiveShadow position={[0, -height / 2 + (r + 0.5) * cellH + jy, -width / 2 + (c + 0.5) * cellW + jz]}>
             <boxGeometry args={[length, sh, sw]} />
             <meshStandardMaterial color={color} emissive={emissive} roughness={roughness} metalness={metalness} />
             <Edges color={edgeColor} />
