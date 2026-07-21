@@ -111,7 +111,7 @@ describe('PlanAgentWorker (loading-agent-llm Batch 13)', () => {
       }));
       const prisma = createPrisma();
       const planningAgentService = { plan: vi.fn() };
-      const worker = new PlanAgentWorker({ url: undefined, host: '127.0.0.1', port: 6381 } as never, prisma as unknown as PrismaService, planningAgentService as never);
+      const worker = new PlanAgentWorker({ url: undefined, host: '127.0.0.1', port: 6381, inlineWorker: true } as never, prisma as unknown as PrismaService, planningAgentService as never);
 
       expect(WorkerCtorMock).not.toHaveBeenCalled();
 
@@ -121,11 +121,26 @@ describe('PlanAgentWorker (loading-agent-llm Batch 13)', () => {
       expect(WorkerCtorMock).toHaveBeenCalledWith(PLAN_AGENT_QUEUE_NAME, expect.any(Function), { connection: { host: '127.0.0.1', port: 6381 } });
     });
 
+    it('onModuleInit does NOT construct a Worker when inlineWorker is false (API-only instance)', async () => {
+      const { PlanAgentWorker } = await import('./plan-agent-worker');
+      const prisma = createPrisma();
+      const planningAgentService = { plan: vi.fn() };
+      const worker = new PlanAgentWorker({ url: undefined, host: '127.0.0.1', port: 6381, inlineWorker: false } as never, prisma as unknown as PrismaService, planningAgentService as never);
+
+      worker.onModuleInit();
+
+      expect(WorkerCtorMock).not.toHaveBeenCalled();
+
+      // and onModuleDestroy stays a no-op since no Worker was ever created
+      await worker.onModuleDestroy();
+      expect(workerCloseMock).not.toHaveBeenCalled();
+    });
+
     it('onModuleDestroy closes the Worker if onModuleInit ran', async () => {
       const { PlanAgentWorker } = await import('./plan-agent-worker');
       const prisma = createPrisma();
       const planningAgentService = { plan: vi.fn() };
-      const worker = new PlanAgentWorker({ url: undefined, host: '127.0.0.1', port: 6381 } as never, prisma as unknown as PrismaService, planningAgentService as never);
+      const worker = new PlanAgentWorker({ url: undefined, host: '127.0.0.1', port: 6381, inlineWorker: true } as never, prisma as unknown as PrismaService, planningAgentService as never);
       worker.onModuleInit();
 
       await worker.onModuleDestroy();
@@ -137,7 +152,7 @@ describe('PlanAgentWorker (loading-agent-llm Batch 13)', () => {
       const { PlanAgentWorker } = await import('./plan-agent-worker');
       const prisma = createPrisma();
       const planningAgentService = { plan: vi.fn() };
-      const worker = new PlanAgentWorker({ url: undefined, host: '127.0.0.1', port: 6381 } as never, prisma as unknown as PrismaService, planningAgentService as never);
+      const worker = new PlanAgentWorker({ url: undefined, host: '127.0.0.1', port: 6381, inlineWorker: true } as never, prisma as unknown as PrismaService, planningAgentService as never);
 
       await expect(worker.onModuleDestroy()).resolves.toBeUndefined();
       expect(workerCloseMock).not.toHaveBeenCalled();

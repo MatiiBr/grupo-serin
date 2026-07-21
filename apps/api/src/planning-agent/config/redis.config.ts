@@ -21,10 +21,29 @@ function parseIntEnv(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value === '') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  return fallback;
+}
+
+/**
+ * `inlineWorker` controls whether THIS process runs its own BullMQ `Worker`
+ * (see `PlanAgentWorker.onModuleInit`). Defaults to `true`, so single-process
+ * deployments and local dev keep executing jobs in the same process that
+ * serves HTTP — zero config, unchanged behavior. Set
+ * `PLAN_AGENT_INLINE_WORKER=false` on API instances when running a dedicated
+ * worker process (`src/worker.ts`) so HTTP servers and job executors scale
+ * independently: any API instance still ENQUEUES via `PlanAgentQueue`, and the
+ * dedicated worker process(es) claim + run them.
+ */
 export const redisConfig = registerAs('redis', () => ({
   url: process.env.REDIS_URL,
   host: process.env.REDIS_HOST ?? '127.0.0.1',
   port: parseIntEnv(process.env.REDIS_PORT, 6381),
+  inlineWorker: parseBoolEnv(process.env.PLAN_AGENT_INLINE_WORKER, true),
 }));
 
 export type RedisConfig = ReturnType<typeof redisConfig>;

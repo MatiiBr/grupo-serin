@@ -10,6 +10,7 @@
   "scripts": {
     "dev:web": "npm run dev -w @camiones/web",
     "dev:api": "npm run dev -w @camiones/api",
+    "dev:worker": "npm run dev:worker -w @camiones/api",
     "test": "npm run test --workspaces --if-present",
     "test:api": "npm run test -w @camiones/api",
     "typecheck": "npm run typecheck --workspaces --if-present",

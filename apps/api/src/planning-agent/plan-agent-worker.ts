@@ -34,6 +34,13 @@ export class PlanAgentWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
+    // API-only instances (PLAN_AGENT_INLINE_WORKER=false) skip starting a
+    // Worker entirely: they still enqueue jobs via `PlanAgentQueue`, but a
+    // dedicated worker process (`src/worker.ts`, default inlineWorker=true)
+    // claims and executes them. `this.worker` stays undefined, so
+    // `onModuleDestroy` is a safe no-op. See `redisConfig.inlineWorker`.
+    if (!this.config.inlineWorker) return;
+
     this.worker = new Worker<PlanAgentJobData>(
       PLAN_AGENT_QUEUE_NAME,
       (job: Job<PlanAgentJobData>) => this.processJob(job.data),

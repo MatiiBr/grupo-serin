@@ -8,7 +8,7 @@ import { buildRedisConnection, redisConfig } from './redis.config';
  * port) when unset — no `.env` changes required.
  */
 
-const ENV_KEYS = ['REDIS_URL', 'REDIS_HOST', 'REDIS_PORT'] as const;
+const ENV_KEYS = ['REDIS_URL', 'REDIS_HOST', 'REDIS_PORT', 'PLAN_AGENT_INLINE_WORKER'] as const;
 
 describe('redisConfig (loading-agent-llm Batch 13)', () => {
   const originalEnv: Record<string, string | undefined> = {};
@@ -65,6 +65,38 @@ describe('redisConfig (loading-agent-llm Batch 13)', () => {
 
   it('exposes the namespace token as redisConfig.KEY', () => {
     expect(redisConfig.KEY).toBe('CONFIGURATION(redis)');
+  });
+
+  describe('inlineWorker (PLAN_AGENT_INLINE_WORKER)', () => {
+    it('defaults to true when PLAN_AGENT_INLINE_WORKER is unset (every process runs its own worker)', () => {
+      delete process.env.PLAN_AGENT_INLINE_WORKER;
+
+      expect(redisConfig().inlineWorker).toBe(true);
+    });
+
+    it('is false when PLAN_AGENT_INLINE_WORKER is "false" (API-only instance, no inline worker)', () => {
+      process.env.PLAN_AGENT_INLINE_WORKER = 'false';
+
+      expect(redisConfig().inlineWorker).toBe(false);
+    });
+
+    it('is false when PLAN_AGENT_INLINE_WORKER is "0"', () => {
+      process.env.PLAN_AGENT_INLINE_WORKER = '0';
+
+      expect(redisConfig().inlineWorker).toBe(false);
+    });
+
+    it('is true when PLAN_AGENT_INLINE_WORKER is "true"', () => {
+      process.env.PLAN_AGENT_INLINE_WORKER = 'true';
+
+      expect(redisConfig().inlineWorker).toBe(true);
+    });
+
+    it('falls back to the default (true) when the value is neither truthy nor falsy', () => {
+      process.env.PLAN_AGENT_INLINE_WORKER = 'maybe';
+
+      expect(redisConfig().inlineWorker).toBe(true);
+    });
   });
 
   describe('buildRedisConnection', () => {
