@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "seed:demo": "ts-node -r tsconfig-paths/register prisma/seed.ts",
+    "seed:full-demo": "ts-node -r tsconfig-paths/register prisma/seed-full-demo.ts",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma"
   },
