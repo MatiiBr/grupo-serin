@@ -1,0 +1,123 @@
+import type { ConstraintSet } from '@camiones/shared';
+import type { LoadingPlannerResult } from '../../domain/loading-planner/loading-planner.types';
+
+/**
+ * loading-agent-llm Phase 6.1 — the port the `planning-agent` module
+ * programs against; `DeepSeekJsonAdapter` (default) and
+ * `DeepSeekToolUseAdapter` (experimental) are its only implementations.
+ * Keeping the port here (not in `adapters/`) lets the future
+ * `planning-agent.service` depend on this interface only, per design.md's
+ * flow: rulesText -> planConstraints -> gate -> applyConstraints -> generate
+ * -> explainPlan -> preview.
+ */
+
+/** Real catalog values from the operation being planned, injected into the prompt so the model uses real codes instead of hallucinating. */
+export interface CatalogContext {
+  productCodes: string[];
+  families: string[];
+  zones: string[];
+  destinations: string[];
+}
+
+export interface PlanConstraintsParams {
+  rulesText: string;
+  catalogContext: CatalogContext;
+}
+
+export interface ExplainPlanParams {
+  plan: LoadingPlannerResult;
+  constraints: ConstraintSet;
+}
+
+/**
+ * self-correcting-replan-loop — a concise, structured summary of what went
+ * wrong with a generated plan, handed to `AgentPort.reviseConstraints` so the
+ * model can propose an adjusted `ConstraintSet` without re-deriving the whole
+ * problem from a raw `LoadingPlannerResult`. Warnings are deliberately NOT
+ * included here — `PlanningAgentService`'s clean/retry gate only ever builds
+ * a `PlanProblems` when there is something a revision could plausibly fix
+ * (unplaced units and/or critical alerts).
+ */
+export interface PlanProblems {
+  unplaced: { productCode: string; reason: string }[];
+  criticalAlerts: { type: string; message: string }[];
+}
+
+export interface ReviseConstraintsParams {
+  rulesText: string;
+  previousConstraints: ConstraintSet;
+  problems: PlanProblems;
+  catalogContext: CatalogContext;
+}
+
+/**
+ * DIAGNOSIS agent — handed to `AgentPort.diagnoseUnresolvedPlan` when the
+ * self-correcting re-plan loop finishes on a BEST attempt that is still not
+ * clean (unplaced units and/or critical alerts survive after
+ * `maxPlanAttempts`). Carries everything the model needs to explain WHY,
+ * without re-deriving the problem from a raw `LoadingPlannerResult` alone.
+ */
+export interface DiagnoseUnresolvedPlanParams {
+  rulesText: string;
+  constraints: ConstraintSet;
+  plan: LoadingPlannerResult;
+  problems: PlanProblems;
+  catalogContext: CatalogContext;
+}
+
+/**
+ * VALIDATION agent — ADVISORY ONLY. `intentMatch` is true when the extracted
+ * `ConstraintSet` faithfully reflects the operator's free-text rules;
+ * `issues` is a list of Spanish-language discrepancies (empty when it
+ * matches). Never used to alter the constraints or the plan — surfaced to
+ * the caller as-is so a human can review it.
+ */
+export interface IntentValidation {
+  intentMatch: boolean;
+  issues: string[];
+}
+
+export interface ValidateIntentParams {
+  rulesText: string;
+  constraints: ConstraintSet;
+  catalogContext: CatalogContext;
+}
+
+export interface AgentPort {
+  /** Turns free-text operator rules into a structured (not-yet-validated) `ConstraintSet`. */
+  planConstraints(params: PlanConstraintsParams): Promise<ConstraintSet>;
+  /** Produces a human-readable explanation of a generated plan given the constraints that were applied. */
+  explainPlan(params: ExplainPlanParams): Promise<string>;
+  /**
+   * self-correcting-replan-loop — given the previous `ConstraintSet` and the
+   * concrete problems it caused (unplaced units, critical alerts), proposes
+   * an ADJUSTED `ConstraintSet` (same schema) that still honors the
+   * operator's intent but is expected to yield a more placeable plan.
+   */
+  reviseConstraints(params: ReviseConstraintsParams): Promise<ConstraintSet>;
+  /**
+   * DIAGNOSIS agent — called ONLY when the re-plan loop's BEST attempt is
+   * still not clean after `maxPlanAttempts`. Returns a short, plain-language
+   * SPANISH diagnosis for the operator: which items could not be placed, the
+   * likely cause (truck effectively full vs. an over-restrictive rule), and
+   * ONE concrete, actionable suggestion.
+   */
+  diagnoseUnresolvedPlan(params: DiagnoseUnresolvedPlanParams): Promise<string>;
+  /**
+   * VALIDATION agent — ADVISORY ONLY semantic/intent check that runs
+   * alongside (never in place of) the deterministic structural/catalog gate.
+   * Checks whether the extracted `ConstraintSet` faithfully captures the
+   * operator's intent (classic pitfall: ZONE_RESTRICTION-confine-TO vs
+   * PRODUCT_ZONE_BAN-ban-FROM inversion, or a product/zone misread). The
+   * caller MUST surface the result but MUST NOT use it to alter the
+   * constraints or the generated plan.
+   */
+  validateIntent(params: ValidateIntentParams): Promise<IntentValidation>;
+}
+
+/**
+ * loading-agent-llm Phase 8 — DI token for `AgentPort`. Interfaces have no
+ * runtime representation, so Nest needs a concrete token to bind the
+ * `DeepSeekJsonAdapter` (default) implementation to in `PlanningAgentModule`.
+ */
+export const AGENT_PORT = Symbol('AGENT_PORT');

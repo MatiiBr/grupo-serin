@@ -32,6 +32,7 @@ Monorepo for an internal steel truck loading and stowage planner. The MVP keeps 
 | `npm run lint` | Runs lint scripts across workspaces that define them. |
 | `npm run prisma:generate` | Generates Prisma Client for the API schema. |
 | `npm run prisma:migrate` | Runs Prisma migrations for the API schema. |
+| `npm run seed:full-demo` | Loads the full-truck 3D planner demo data (`OP-FULL-DEMO`). |
 
 ## Local Database
 
@@ -59,6 +60,27 @@ Check migration state with:
 ```sh
 npm exec -w @camiones/api prisma migrate status -- --schema prisma/schema.prisma
 ```
+
+## Demo Data
+
+To reproduce the 3D planner demo (the one in the demo video), run the full-truck
+demo seed. With PostgreSQL up, migrations applied, and `DATABASE_URL` set (see
+[Local Database](#local-database)):
+
+```sh
+npm run seed:full-demo
+```
+
+This is **additive and re-runnable**: it creates a single standalone load
+operation `OP-FULL-DEMO` — a full, balanced steel-distributor truck with 3
+destinations across the 3 truck zones and the 9 product families (coil, sheet,
+IPN profile, round tube, flat bar, rebar, square tube, angle, SIMA mesh) with
+multi-tier stacking — then generates and approves its plan. It never touches the
+canonical seed or any other operation, and re-running it just refreshes the demo.
+
+The script prints the operation id and the ready-to-open planner/report URLs.
+Expected result: **54 placed items, 0 unplaced, 0 critical alerts, 0 balance
+warnings**. Open the printed `/operations/:id/planner` URL to see the 3D load.
 
 ## MVP Architecture
 

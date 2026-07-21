@@ -1,3 +1,4 @@
+import type { SoftPreference } from '@camiones/shared';
 import type { AlertSeverity, AlertType, LoadingMethod, ProductFamily, TruckZoneType, UnplacedReason } from '@prisma/client';
 
 export type LoadingMethodValue = `${LoadingMethod}`;
@@ -17,6 +18,13 @@ export interface PlannerTruckZoneInput {
   maxWeightKg?: number;
 }
 
+export interface PlannerTruckTierInput {
+  id?: string;
+  level: number;
+  maxHeightMm?: number;
+  maxWeightKg?: number;
+}
+
 export interface PlannerTruckInput {
   id: string;
   loadingMethod: LoadingMethodValue;
@@ -25,6 +33,7 @@ export interface PlannerTruckInput {
   widthMm?: number;
   heightMm?: number;
   zones: PlannerTruckZoneInput[];
+  tiers: PlannerTruckTierInput[];
 }
 
 export interface PlannerDestinationInput {
@@ -46,12 +55,35 @@ export interface PlannerProductInput {
   heightMm?: number;
   stackable: boolean;
   rotationAllowed: boolean;
+  fragile: boolean;
+  maxStackLoadKg?: number;
+  /**
+   * When set, confines placement to these zone types only (hard filter in
+   * `placeUnit`). `undefined` = unrestricted (identity — matches pre-existing
+   * behavior). Additive field for loading-agent-llm ZONE_RESTRICTION /
+   * FAMILY_PLACEMENT_BAN hard rules.
+   */
+  allowedZones?: TruckZoneTypeValue[];
+  /**
+   * When set, the product may never rest on a surface whose tier exceeds
+   * this value (hard filter in `evaluateCandidate`). `undefined` =
+   * unrestricted (identity). Additive field for loading-agent-llm
+   * TIER_RESTRICTION hard rule.
+   */
+  maxTier?: number;
 }
 
 export interface LoadingPlannerInput {
   truck: PlannerTruckInput;
   destinations: PlannerDestinationInput[];
   products: PlannerProductInput[];
+  /**
+   * solver-soft-preferences Phase 3 — read-only passthrough of
+   * `ConstraintSet.softPreferences`, set by `applyConstraints`. `undefined`
+   * or `[]` = identity (matches current behavior; NOT yet consumed by
+   * `HeuristicLoadingPlanner` — see Phase 4).
+   */
+  softPreferences?: SoftPreference[];
 }
 
 export interface PlannerPlacedItem {
@@ -62,6 +94,7 @@ export interface PlannerPlacedItem {
   xMm: number;
   yMm: number;
   zMm: number;
+  tier: number;
   rotationDeg: number;
   lengthMm: number;
   widthMm: number;
