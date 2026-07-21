@@ -15,7 +15,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "prisma:generate": "npm run prisma:generate -w @camiones/api",
-    "prisma:migrate": "npm run prisma:migrate -w @camiones/api --"
+    "prisma:migrate": "npm run prisma:migrate -w @camiones/api --",
+    "seed:full-demo": "npm run seed:full-demo -w @camiones/api"
   },
   "engines": {
     "node": ">=20.11.0",
