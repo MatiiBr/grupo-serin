@@ -17,5 +17,51 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    build: .
+    container_name: camiones-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/camiones?schema=public
+      PORT: 3000
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./apps:/app/apps
+      - ./packages:/app/packages
+      - ./package.json:/app/package.json:ro
+      - ./package-lock.json:/app/package-lock.json:ro
+      - ./tsconfig.base.json:/app/tsconfig.base.json:ro
+    command: sh -c "npm run prisma:generate -w @camiones/api && npm run prisma:deploy -w @camiones/api && npm run dev:api"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    container_name: camiones-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      VITE_API_URL: http://localhost:3002
+      VITE_API_ACTOR: web:demo-user
+      VITE_API_ROLE: LOGISTICS_MANAGER
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps:/app/apps
+      - ./packages:/app/packages
+      - ./package.json:/app/package.json:ro
+      - ./package-lock.json:/app/package-lock.json:ro
+      - ./tsconfig.base.json:/app/tsconfig.base.json:ro
+    command: npm run dev -w @camiones/web -- --host 0.0.0.0
+
 volumes:
   camiones-postgres-data:

@@ -8,9 +8,22 @@ Monorepo for an internal steel truck loading and stowage planner. The MVP keeps 
 2. Copy `apps/api/.env.example` to `apps/api/.env` and set `DATABASE_URL` if you are not using the local Docker database.
 3. Start local PostgreSQL with `docker compose up -d postgres`.
 4. Apply database migrations with `npm run prisma:migrate`.
-5. Run the frontend with `npm run dev:web`.
-6. Run the API with `npm run dev:api`.
-7. Open Swagger at `http://localhost:3000/docs` once the API is running.
+5. Seed demo data with `npm run seed:demo -w @camiones/api`.
+6. Run the frontend with `npm run dev:web`.
+7. Run the API with `npm run dev:api`.
+8. Open Swagger at `http://localhost:3000/docs` once the API is running.
+
+### Alternative: full Docker stack
+
+If you'd rather not run Node locally, `make up` builds and starts Postgres, the API, and the web app as containers (ports `3002` for the API and `5173` for the web app):
+
+```sh
+make up        # build + start postgres, api, and web
+make migrate   # run Prisma migrations inside the api container
+make seed      # seed demo data inside the api container
+```
+
+Other useful targets: `make logs`, `make api-logs`, `make web-logs`, `make down`. See the `Makefile` for the full list.
 
 ## Structure
 
@@ -32,6 +45,7 @@ Monorepo for an internal steel truck loading and stowage planner. The MVP keeps 
 | `npm run lint` | Runs lint scripts across workspaces that define them. |
 | `npm run prisma:generate` | Generates Prisma Client for the API schema. |
 | `npm run prisma:migrate` | Runs Prisma migrations for the API schema. |
+| `npm run seed:demo -w @camiones/api` | Seeds the database with demo dispatch lifecycle data. |
 
 ## Local Database
 
@@ -59,6 +73,10 @@ Check migration state with:
 ```sh
 npm exec -w @camiones/api prisma migrate status -- --schema prisma/schema.prisma
 ```
+
+## Seed Data
+
+`npm run seed:demo -w @camiones/api` populates the database with a demo dispatch lifecycle: customers, products, destinations, a truck/trailer pair, orders in different states (ready, blocked, planned), and a delivery plan with dispatch orders. Use it after migrating a fresh database to have data to explore in the frontend.
 
 ## MVP Architecture
 

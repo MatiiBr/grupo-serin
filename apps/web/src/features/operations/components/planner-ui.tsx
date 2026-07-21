@@ -1,7 +1,9 @@
 import { PlanStatus, ProductFamily } from '@camiones/shared';
 import { Canvas } from '@react-three/fiber';
-import { Edges, OrbitControls, Text } from '@react-three/drei';
-import { useEffect, useMemo, useState } from 'react';
+import { Edges, OrbitControls, Text, TransformControls } from '@react-three/drei';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Ref, RefObject } from 'react';
+import type { Group, Object3D } from 'three';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { loadingPlansApi } from '../../../api/loading-plans';
@@ -11,6 +13,11 @@ import { MutationError, SectionTitle } from '../../../components/ui';
 import { DataTable, MetricGrid } from './operation-ui';
 
 type ItemAlertStatus = 'critical' | 'warning' | undefined;
+export type TruckDimensions = { lengthMm: number; widthMm: number; heightMm: number };
+export type DraggedPlacement = Pick<PlacedItem, 'id' | 'xMm' | 'yMm' | 'zMm' | 'lengthMm' | 'widthMm' | 'heightMm'>;
+export type DraftPlacement = { itemId: string; xMm: number; yMm: number; zMm: number; savedXMm: number; savedYMm: number; savedZMm: number; isValid: boolean; message?: string };
+export type DraftPlacementByItemId = Map<string, DraftPlacement>;
+const INVALID_DRAFT_MESSAGE = 'Posición temporal inválida: corregí colisión/apoyo/límites para guardar';
 
 export interface PlacedItemAdjustmentFormValues {
   xCm: string;
@@ -34,10 +41,13 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
   const [viewAll, setViewAll] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(null);
+  const [isSceneLocked, setIsSceneLocked] = useState(true);
+  const [hiddenStagingItemIds, setHiddenStagingItemIds] = useState<Set<string>>(() => new Set());
   const adjustItem = useMutation({
     mutationFn: ({ itemId, payload }: { itemId: string; payload: Parameters<typeof loadingPlansApi.adjustPlacedItem>[2] }) =>
       loadingPlansApi.adjustPlacedItem(plan.id, itemId, payload),
-    onSuccess: () => {
+    onSuccess: (updatedPlan) => {
+      queryClient.setQueryData(queryKeys.loadingPlan.current(operationId), updatedPlan);
       void queryClient.invalidateQueries({ queryKey: queryKeys.loadingPlan.current(operationId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.operations.detail(operationId) });
     },
@@ -59,6 +69,8 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
   const displayedMetrics = preview?.metrics ?? plan.metrics;
   const displayedEvaluation = preview?.evaluation ?? plan.evaluation;
   const displayedAlertCounts = preview?.alertCounts ?? plan.alertCounts;
+  const stagingUnplacedItems = useMemo(() => displayedUnplacedItems.filter((item) => !hiddenStagingItemIds.has(item.id)), [displayedUnplacedItems, hiddenStagingItemIds]);
+  const hiddenStagingItemCount = useMemo(() => displayedUnplacedItems.filter((item) => hiddenStagingItemIds.has(item.id)).length, [displayedUnplacedItems, hiddenStagingItemIds]);
   const sequenceByPlacedItemId = useMemo(() => new Map(displayedSteps.filter((step) => step.placedItemId).map((step) => [step.placedItemId!, step.sequence])), [displayedSteps]);
   const maxStep = displayedSteps.length;
   const visibleItems = useMemo(() => {
@@ -75,12 +87,15 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
   const selectedItemAlerts = selectedItem ? (alertsByPlacedItemId.get(selectedItem.id) ?? []) : [];
   const criticalAlerts = displayedAlerts.filter((alert) => alert.severity === 'CRITICAL');
   const placedItemLabelById = useMemo(() => new Map(displayedPlacedItems.map((item) => [item.id, `${item.productCode} #${item.unitIndex}`])), [displayedPlacedItems]);
+  const sceneReadOnly = Boolean(selectedCandidate) || plan.planStatus === PlanStatus.APPROVED;
+  const sceneEditable = !sceneReadOnly && !isSceneLocked;
 
   useEffect(() => {
     setCurrentStep(plan.steps.length > 0 ? 1 : 0);
     setViewAll(false);
     setSelectedItemId(null);
     setSelectedCandidateIndex(null);
+    setHiddenStagingItemIds(new Set());
   }, [plan.id, plan.steps.length]);
 
   useEffect(() => {
@@ -101,12 +116,17 @@ export function PlanDetail({ plan, operationId, truck }: { plan: LoadingPlan; op
       <section className="card simulation-card">
         <SectionTitle title="Simulacion 3D de carga" subtitle="Secuencia operativa con altura real y posicion Z" />
         {criticalAlerts.length > 0 ? <PlanCriticalBanner count={criticalAlerts.length} /> : null}
+        <div className="scene-toolbar">
+          <button type="button" className={!isSceneLocked && !sceneReadOnly ? 'active' : ''} disabled={sceneReadOnly} onClick={() => setIsSceneLocked((value) => !value)}>{isSceneLocked || sceneReadOnly ? 'Editar posiciones 3D' : 'Bloquear edicion 3D'}</button>
+          <span>{sceneReadOnly ? 'Vista de solo lectura' : isSceneLocked ? 'Edicion bloqueada' : 'Edicion activa: arrastra el bulto seleccionado'}</span>
+        </div>
         <div className="simulation-layout">
-          <PlannerScene items={visibleItems} selectedItemId={selectedItem?.id ?? null} sequenceByPlacedItemId={sequenceByPlacedItemId} itemStatusByPlacedItemId={itemStatusByPlacedItemId} truck={truck} onSelect={setSelectedItemId} />
+          <PlannerScene items={visibleItems} validationItems={displayedPlacedItems} selectedItemId={selectedItem?.id ?? null} sequenceByPlacedItemId={sequenceByPlacedItemId} itemStatusByPlacedItemId={itemStatusByPlacedItemId} truck={truck} editable={sceneEditable} isSaving={adjustItem.isPending} onSelect={setSelectedItemId} onMoveItem={(itemId, payload) => adjustItem.mutateAsync({ itemId, payload }).then(() => undefined)} />
           <div className="simulation-side">
             <StepControls currentStep={currentStep} maxStep={maxStep} viewAll={viewAll} onPrevious={() => setCurrentStep((step) => Math.max(1, step - 1))} onNext={() => setCurrentStep((step) => Math.min(maxStep, step + 1))} onReset={() => { setCurrentStep(maxStep > 0 ? 1 : 0); setViewAll(false); }} onToggleViewAll={() => setViewAll((value) => !value)} />
             <StepInstructionPanel step={activeStep} maxStep={maxStep} viewAll={viewAll} visibleCount={visibleItems.length} criticalCount={criticalAlerts.length} />
-            <SelectedItemPanel item={selectedItem} sequence={selectedItem ? sequenceByPlacedItemId.get(selectedItem.id) : undefined} alerts={selectedItemAlerts} readOnly={Boolean(selectedCandidate) || plan.planStatus === PlanStatus.APPROVED} isSaving={adjustItem.isPending} error={adjustItem.error} onSave={(itemId, payload) => adjustItem.mutate({ itemId, payload })} />
+            <SelectedItemPanel item={selectedItem} sequence={selectedItem ? sequenceByPlacedItemId.get(selectedItem.id) : undefined} alerts={selectedItemAlerts} readOnly={sceneReadOnly} isSaving={adjustItem.isPending} error={adjustItem.error} onSave={(itemId, payload) => adjustItem.mutate({ itemId, payload })} />
+            <UnplacedStagingPanel items={stagingUnplacedItems} hiddenCount={hiddenStagingItemCount} readOnly={sceneReadOnly} isSaving={placeUnplacedItem.isPending} onPlace={(itemId, payload) => placeUnplacedItem.mutate({ itemId, payload })} onHide={(itemId) => setHiddenStagingItemIds((ids) => new Set(ids).add(itemId))} onShowAll={() => setHiddenStagingItemIds(new Set())} />
           </div>
         </div>
       </section>
@@ -335,9 +355,124 @@ function loadingMethodLabel(method: string) {
   return labels[method] ?? method;
 }
 
-function PlannerScene({ items, selectedItemId, sequenceByPlacedItemId, itemStatusByPlacedItemId, truck, onSelect }: { items: PlacedItem[]; selectedItemId: string | null; sequenceByPlacedItemId: Map<string, number>; itemStatusByPlacedItemId: Map<string, ItemAlertStatus>; truck: Truck | null; onSelect: (id: string) => void }) {
-  const dimensions = useMemo(() => truckDimensions(items, truck), [items, truck]);
+function PlannerScene({ items, validationItems, selectedItemId, sequenceByPlacedItemId, itemStatusByPlacedItemId, truck, editable, isSaving, onSelect, onMoveItem }: { items: PlacedItem[]; validationItems: PlacedItem[]; selectedItemId: string | null; sequenceByPlacedItemId: Map<string, number>; itemStatusByPlacedItemId: Map<string, ItemAlertStatus>; truck: Truck | null; editable: boolean; isSaving: boolean; onSelect: (id: string) => void; onMoveItem: (itemId: string, payload: AdjustPlacedItemPayload) => Promise<void> }) {
+  const dimensions = useMemo(() => truckDimensions(validationItems, truck), [validationItems, truck]);
   const scale = 14 / Math.max(dimensions.lengthMm, dimensions.widthMm, dimensions.heightMm, 1);
+  const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
+  const [draftPlacements, setDraftPlacements] = useState<DraftPlacementByItemId>(() => new Map());
+  const [savingDraftIds, setSavingDraftIds] = useState<Set<string>>(() => new Set());
+  const savedSelectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const selectedDraftPlacement = selectedItemId ? draftPlacements.get(selectedItemId) : undefined;
+  const selectedItem = savedSelectedItem && selectedDraftPlacement ? { ...savedSelectedItem, xMm: selectedDraftPlacement.xMm, yMm: selectedDraftPlacement.yMm, zMm: selectedDraftPlacement.zMm } : savedSelectedItem;
+  const canDragSelected = Boolean(editable && !isSaving && selectedItem && !selectedItem.locked);
+  const selectedDraftItem = selectedDraftPlacement ? validationItems.find((item) => item.id === selectedDraftPlacement.itemId) ?? null : null;
+  const displayedItems = useMemo(() => applyDraftPlacements(items, draftPlacements), [draftPlacements, items]);
+  const validationItemsWithDraft = useMemo(() => applyDraftPlacements(validationItems, draftPlacements), [draftPlacements, validationItems]);
+  const pendingDrafts = useMemo(() => [...draftPlacements.values()].filter((draft) => validationItems.some((item) => item.id === draft.itemId)), [draftPlacements, validationItems]);
+  const validDrafts = pendingDrafts.filter((draft) => draft.isValid);
+  const invalidDraftCount = pendingDrafts.length - validDrafts.length;
+  const hasPendingDraft = Boolean(selectedDraftPlacement && selectedDraftItem);
+  const hasInvalidDraft = Boolean(hasPendingDraft && !selectedDraftPlacement?.isValid);
+  const isDraftSaving = isSaving || savingDraftIds.size > 0;
+
+  useEffect(() => {
+    setBlockedMessage(null);
+  }, [editable, selectedItemId]);
+
+  useEffect(() => {
+    if (draftPlacements.size === 0) return;
+    if (!editable) {
+      setDraftPlacements(new Map());
+      return;
+    }
+    const nextDrafts = new Map(draftPlacements);
+    for (const draft of draftPlacements.values()) {
+      const savedItem = validationItems.find((item) => item.id === draft.itemId);
+      const savedPositionChanged = savedItem && (savedItem.xMm !== draft.savedXMm || savedItem.yMm !== draft.savedYMm || savedItem.zMm !== draft.savedZMm);
+      if (!savedItem || savedItem.locked || savedPositionChanged) nextDrafts.delete(draft.itemId);
+    }
+    if (nextDrafts.size !== draftPlacements.size) setDraftPlacements(nextDrafts);
+  }, [draftPlacements, editable, validationItems]);
+
+  const saveDraftPlacement = async () => {
+    const [move] = selectedItemId ? buildDraftPlacementAdjustments(draftPlacements, validationItems, selectedItemId) : [];
+    if (!move) return;
+    setSavingDraftIds((ids) => new Set(ids).add(move.itemId));
+    setBlockedMessage('Guardando posición temporal...');
+    try {
+      await onMoveItem(move.itemId, move.payload);
+      setDraftPlacements((drafts) => {
+        const nextDrafts = new Map(drafts);
+        nextDrafts.delete(move.itemId);
+        return nextDrafts;
+      });
+      setBlockedMessage('Posición temporal guardada');
+    } catch {
+      setBlockedMessage('No se pudo guardar la posición temporal');
+    } finally {
+      setSavingDraftIds((ids) => {
+        const nextIds = new Set(ids);
+        nextIds.delete(move.itemId);
+        return nextIds;
+      });
+    }
+  };
+
+  const saveAllValidDraftPlacements = async () => {
+    const moves = buildDraftPlacementAdjustments(draftPlacements, validationItems);
+    if (moves.length === 0) return;
+    setSavingDraftIds(new Set(moves.map((move) => move.itemId)));
+    setBlockedMessage(`Guardando ${moves.length} posición(es) temporal(es)...`);
+    const savedItemIds: string[] = [];
+    try {
+      for (const move of moves) {
+        await onMoveItem(move.itemId, move.payload);
+        savedItemIds.push(move.itemId);
+      }
+      setDraftPlacements((drafts) => {
+        const nextDrafts = new Map(drafts);
+        for (const itemId of savedItemIds) nextDrafts.delete(itemId);
+        return nextDrafts;
+      });
+      setBlockedMessage('Posiciones temporales guardadas');
+    } catch {
+      setDraftPlacements((drafts) => {
+        const nextDrafts = new Map(drafts);
+        for (const itemId of savedItemIds) nextDrafts.delete(itemId);
+        return nextDrafts;
+      });
+      setBlockedMessage('No se pudieron guardar todas las posiciones temporales');
+    } finally {
+      setSavingDraftIds(new Set());
+    }
+  };
+
+  const cancelDraftPlacement = () => {
+    if (!selectedItemId) return;
+    setDraftPlacements((drafts) => {
+      const nextDrafts = new Map(drafts);
+      nextDrafts.delete(selectedItemId);
+      return nextDrafts;
+    });
+    setBlockedMessage(null);
+  };
+
+  const clearDraftPlacements = () => {
+    setDraftPlacements(new Map());
+    setBlockedMessage(null);
+  };
+
+  const updateDraftPlacement = (draftPlacement: DraftPlacement | null) => {
+    setDraftPlacements((drafts) => {
+      const nextDrafts = new Map(drafts);
+      if (!draftPlacement) {
+        if (selectedItemId) nextDrafts.delete(selectedItemId);
+        return nextDrafts;
+      }
+      nextDrafts.set(draftPlacement.itemId, draftPlacement);
+      return nextDrafts;
+    });
+  };
 
   return (
     <div className="planner-scene">
@@ -346,8 +481,10 @@ function PlannerScene({ items, selectedItemId, sequenceByPlacedItemId, itemStatu
         <ambientLight intensity={0.72} />
         <directionalLight position={[6, 9, 5]} intensity={1.35} castShadow />
         <TruckFrame dimensions={dimensions} scale={scale} />
-        {items.map((item) => (
-          <PlacedItemBox key={item.id} item={item} sequence={sequenceByPlacedItemId.get(item.id)} alertStatus={itemStatusByPlacedItemId.get(item.id)} scale={scale} truckLengthMm={dimensions.lengthMm} truckWidthMm={dimensions.widthMm} selected={item.id === selectedItemId} onSelect={onSelect} />
+        {displayedItems.map((item) => (
+          canDragSelected && item.id === selectedItemId
+            ? <DraggablePlacedItemBox key={item.id} item={item} savedItem={savedSelectedItem ?? item} items={validationItemsWithDraft} dimensions={dimensions} sequence={sequenceByPlacedItemId.get(item.id)} alertStatus={hasInvalidDraft ? 'critical' : itemStatusByPlacedItemId.get(item.id)} scale={scale} selected onSelect={onSelect} onBlocked={setBlockedMessage} onDraftPlacement={updateDraftPlacement} />
+            : <PlacedItemBox key={item.id} item={item} sequence={sequenceByPlacedItemId.get(item.id)} alertStatus={draftPlacements.get(item.id)?.isValid === false ? 'critical' : itemStatusByPlacedItemId.get(item.id)} scale={scale} truckLengthMm={dimensions.lengthMm} truckWidthMm={dimensions.widthMm} selected={item.id === selectedItemId} pending={draftPlacements.has(item.id)} draggable={editable && !item.locked && !isSaving} onSelect={onSelect} />
         ))}
         <OrbitControls
           makeDefault
@@ -362,12 +499,41 @@ function PlannerScene({ items, selectedItemId, sequenceByPlacedItemId, itemStatu
           target={[0, 1.2, 0]}
         />
       </Canvas>
-      <div className="scene-hint">Orbitar / zoom / seleccionar bulto</div>
+      {pendingDrafts.length > 0 ? <div className={`scene-draft-actions${invalidDraftCount > 0 ? ' invalid' : ''}`} aria-label="Movimientos pendientes">
+        <span>{pendingDrafts.length} temporal(es){invalidDraftCount > 0 ? ` / ${invalidDraftCount} invalido(s)` : ''}</span>
+        <button type="button" onClick={saveDraftPlacement} disabled={isDraftSaving || !selectedDraftPlacement?.isValid}>{isDraftSaving ? 'Guardando' : 'Guardar esta'}</button>
+        <button type="button" onClick={saveAllValidDraftPlacements} disabled={isDraftSaving || validDrafts.length === 0}>{isDraftSaving ? 'Guardando' : 'Guardar válidas'}</button>
+        <button type="button" className="ghost" onClick={cancelDraftPlacement} disabled={isDraftSaving || !hasPendingDraft}>Cancelar esta</button>
+        <button type="button" className="ghost" onClick={clearDraftPlacements} disabled={isDraftSaving}>Limpiar temporales</button>
+      </div> : null}
+      <div className={`scene-hint${blockedMessage || hasInvalidDraft ? ' blocked' : hasPendingDraft || pendingDrafts.length > 0 ? ' editable' : canDragSelected ? ' editable' : ''}`}>{blockedMessage ?? (hasInvalidDraft ? selectedDraftPlacement?.message : hasPendingDraft ? 'Posición temporal lista para guardar' : pendingDrafts.length > 0 ? 'Hay posiciones temporales pendientes' : canDragSelected ? 'Solta para validar apoyo y colisiones' : 'Orbitar / zoom / seleccionar bulto')}</div>
     </div>
   );
 }
 
-function TruckFrame({ dimensions, scale }: { dimensions: { lengthMm: number; widthMm: number; heightMm: number }; scale: number }) {
+export function applyDraftPlacements<T extends Pick<PlacedItem, 'id' | 'xMm' | 'yMm' | 'zMm'>>(items: T[], draftPlacements: DraftPlacementByItemId) {
+  if (draftPlacements.size === 0) return items;
+  return items.map((item) => {
+    const draftPlacement = draftPlacements.get(item.id);
+    return draftPlacement ? { ...item, xMm: draftPlacement.xMm, yMm: draftPlacement.yMm, zMm: draftPlacement.zMm } : item;
+  });
+}
+
+export function buildDraftPlacementAdjustments(draftPlacements: DraftPlacementByItemId, items: Pick<PlacedItem, 'id' | 'rotationDeg' | 'locked'>[], selectedItemId?: string | null) {
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  return [...draftPlacements.values()]
+    .filter((draft) => draft.isValid && (!selectedItemId || draft.itemId === selectedItemId))
+    .flatMap((draft) => {
+      const item = itemsById.get(draft.itemId);
+      if (!item) return [];
+      return [{
+        itemId: item.id,
+        payload: { xMm: draft.xMm, yMm: draft.yMm, zMm: draft.zMm, rotationDeg: item.rotationDeg, locked: item.locked } satisfies AdjustPlacedItemPayload,
+      }];
+    });
+}
+
+function TruckFrame({ dimensions, scale }: { dimensions: TruckDimensions; scale: number }) {
   const length = dimensions.lengthMm * scale;
   const width = dimensions.widthMm * scale;
   const height = dimensions.heightMm * scale;
@@ -392,18 +558,80 @@ function TruckFrame({ dimensions, scale }: { dimensions: { lengthMm: number; wid
   );
 }
 
-function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truckWidthMm, selected, onSelect }: { item: PlacedItem; sequence?: number; alertStatus: ItemAlertStatus; scale: number; truckLengthMm: number; truckWidthMm: number; selected: boolean; onSelect: (id: string) => void }) {
+function DraggablePlacedItemBox({ item, savedItem, items, dimensions, sequence, alertStatus, scale, selected, onSelect, onBlocked, onDraftPlacement }: { item: PlacedItem; savedItem: PlacedItem; items: PlacedItem[]; dimensions: TruckDimensions; sequence?: number; alertStatus: ItemAlertStatus; scale: number; selected: boolean; onSelect: (id: string) => void; onBlocked: (message: string | null) => void; onDraftPlacement: (draftPlacement: DraftPlacement | null) => void }) {
+  const groupRef = useRef<Group>(null);
+  const initialScenePosition = scenePositionFromDomain(item, dimensions, scale);
+  const lastValidPositionRef = useRef(initialScenePosition);
+
+  useEffect(() => {
+    lastValidPositionRef.current = scenePositionFromDomain(item, dimensions, scale);
+    if (groupRef.current) groupRef.current.position.set(...lastValidPositionRef.current);
+  }, [dimensions, item, scale]);
+
+  const currentDomainPosition = () => {
+    if (!groupRef.current) return null;
+    return domainPositionFromScene(groupRef.current.position.x, groupRef.current.position.y, groupRef.current.position.z, item, dimensions, scale);
+  };
+
+  const snapToCommittedPosition = () => {
+    const savedPosition = scenePositionFromDomain(item, dimensions, scale);
+    lastValidPositionRef.current = savedPosition;
+    groupRef.current?.position.set(...savedPosition);
+  };
+
+  const previewCurrentPosition = () => {
+    const rawCandidate = currentDomainPosition();
+    if (!rawCandidate) return;
+    const result = settleAndValidateDraggedPlacement(rawCandidate, item, items, dimensions);
+    if (result.isValid) {
+      onBlocked(null);
+      return;
+    }
+    onBlocked(INVALID_DRAFT_MESSAGE);
+  };
+
+  const saveCurrentPosition = () => {
+    const rawCandidate = currentDomainPosition();
+    const result = rawCandidate ? settleAndValidateDraggedPlacement(rawCandidate, item, items, dimensions) : null;
+    if (!result) {
+      snapToCommittedPosition();
+      onDraftPlacement(null);
+      onBlocked('Movimiento bloqueado: no se pudo calcular la posicion');
+      return;
+    }
+    const candidate = result.candidate;
+    const settledScenePosition = scenePositionFromDomain({ ...item, ...candidate }, dimensions, scale);
+    lastValidPositionRef.current = settledScenePosition;
+    groupRef.current?.position.set(...settledScenePosition);
+    if (result.isValid && candidate.xMm === savedItem.xMm && candidate.yMm === savedItem.yMm && candidate.zMm === savedItem.zMm) {
+      onDraftPlacement(null);
+      onBlocked(null);
+      return;
+    }
+    onDraftPlacement({ itemId: item.id, xMm: candidate.xMm, yMm: candidate.yMm, zMm: candidate.zMm, savedXMm: savedItem.xMm, savedYMm: savedItem.yMm, savedZMm: savedItem.zMm, isValid: result.isValid, message: result.isValid ? undefined : INVALID_DRAFT_MESSAGE });
+    onBlocked(result.isValid ? null : INVALID_DRAFT_MESSAGE);
+  };
+
+  return (
+    <>
+      <PlacedItemBox refGroup={groupRef} item={item} sequence={sequence} alertStatus={alertStatus} scale={scale} truckLengthMm={dimensions.lengthMm} truckWidthMm={dimensions.widthMm} selected={selected} draggable onSelect={onSelect} />
+      <TransformControls object={groupRef as unknown as RefObject<Object3D>} mode="translate" showX showY showZ onObjectChange={previewCurrentPosition} onMouseUp={saveCurrentPosition} />
+    </>
+  );
+}
+
+function PlacedItemBox({ refGroup, item, sequence, alertStatus, scale, truckLengthMm, truckWidthMm, selected, pending = false, draggable = false, onSelect }: { refGroup?: Ref<Group>; item: PlacedItem; sequence?: number; alertStatus: ItemAlertStatus; scale: number; truckLengthMm: number; truckWidthMm: number; selected: boolean; pending?: boolean; draggable?: boolean; onSelect: (id: string) => void }) {
   const length = item.lengthMm * scale;
   const width = item.widthMm * scale;
   const height = Math.max(item.heightMm * scale, 0.08);
   const x = (item.xMm + item.lengthMm / 2 - truckLengthMm / 2) * scale;
   const y = (item.zMm + item.heightMm / 2) * scale;
   const z = (item.yMm + item.widthMm / 2 - truckWidthMm / 2) * scale;
-  const color = alertStatus === 'critical' ? '#ff1f1f' : alertStatus === 'warning' ? '#ffbf3f' : selected ? '#ffe08a' : item.manuallyAdjusted ? '#41d6c3' : familyColor(item.productFamily);
+  const color = alertStatus === 'critical' ? '#ff1f1f' : alertStatus === 'warning' ? '#ffbf3f' : selected && draggable ? '#b7ff8a' : selected ? '#ffe08a' : item.manuallyAdjusted ? '#41d6c3' : familyColor(item.productFamily);
   const edgeColor = alertStatus === 'critical' ? '#ffffff' : item.locked ? '#ffffff' : selected ? '#ffffff' : '#2c1b0b';
 
   return (
-    <group position={[x, y, z]} onClick={(event) => { event.stopPropagation(); onSelect(item.id); }}>
+    <group ref={refGroup} position={[x, y, z]} onClick={(event) => { event.stopPropagation(); onSelect(item.id); }}>
       <mesh castShadow receiveShadow>
         <boxGeometry args={[length, height, width]} />
         <meshStandardMaterial color={color} emissive={alertStatus === 'critical' ? '#7a0000' : '#000000'} roughness={0.58} metalness={0.28} />
@@ -412,6 +640,8 @@ function PlacedItemBox({ item, sequence, alertStatus, scale, truckLengthMm, truc
       {alertStatus === 'critical' ? <Text position={[0, height / 2 + 0.42, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.24} color="#ffffff">INVALIDO</Text> : null}
       {alertStatus === 'warning' ? <Text position={[0, height / 2 + 0.32, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.2} color="#2b1700">ALERTA</Text> : null}
       {sequence ? <Text position={[0, height / 2 + 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={Math.max(0.18, Math.min(length, width) / 4)} color="#19110a">#{sequence}</Text> : null}
+      {selected && draggable ? <Text position={[0, height / 2 + 0.36, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.18} color="#112400">MOVER</Text> : null}
+      {pending && !selected ? <Text position={[0, height / 2 + 0.34, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.18} color="#112400">TEMP</Text> : null}
       {item.locked ? <Text position={[0, height / 2 + 0.34, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.18} color="#ffffff">LOCK</Text> : null}
     </group>
   );
@@ -490,6 +720,22 @@ function SelectedItemPanel({ item, sequence, alerts, readOnly, isSaving, error, 
   );
 }
 
+function UnplacedStagingPanel({ items, hiddenCount, readOnly, isSaving, onPlace, onHide, onShowAll }: { items: UnplacedItem[]; hiddenCount: number; readOnly: boolean; isSaving: boolean; onPlace: (itemId: string, payload: PlaceUnplacedItemPayload) => void; onHide: (itemId: string) => void; onShowAll: () => void }) {
+  return (
+    <div className="staging-panel">
+      <div className="staging-head">
+        <div>
+          <strong>Staging fuera del camión</strong>
+          <p>{items.length === 0 ? 'No hay bultos visibles fuera del camion.' : 'Bultos no ubicados: podés darles coordenadas o dejarlos fuera de esta vista.'}</p>
+        </div>
+        {hiddenCount > 0 ? <button type="button" className="ghost" onClick={onShowAll}>Mostrar ocultos ({hiddenCount})</button> : null}
+      </div>
+      {items.length === 0 ? <p className="muted">Sin bultos en staging.</p> : <div className="list compact">{items.map((item) => <UnplacedItemPlacementCard key={item.id} item={item} readOnly={readOnly} isSaving={isSaving} onPlace={onPlace} onHide={onHide} />)}</div>}
+      <p className="staging-note">Ocultar no descarta ni elimina: la API actual sólo permite ubicar manualmente.</p>
+    </div>
+  );
+}
+
 function UnplacedItemsPanel({ items, readOnly, isSaving, error, onPlace }: { items: UnplacedItem[]; readOnly: boolean; isSaving: boolean; error: Error | null; onPlace: (itemId: string, payload: PlaceUnplacedItemPayload) => void }) {
   return (
     <div className="card">
@@ -500,9 +746,9 @@ function UnplacedItemsPanel({ items, readOnly, isSaving, error, onPlace }: { ite
   );
 }
 
-function UnplacedItemPlacementCard({ item, readOnly, isSaving, onPlace }: { item: UnplacedItem; readOnly: boolean; isSaving: boolean; onPlace: (itemId: string, payload: PlaceUnplacedItemPayload) => void }) {
+function UnplacedItemPlacementCard({ item, readOnly, isSaving, onPlace, onHide }: { item: UnplacedItem; readOnly: boolean; isSaving: boolean; onPlace: (itemId: string, payload: PlaceUnplacedItemPayload) => void; onHide?: (itemId: string) => void }) {
   const { handleSubmit, register } = useForm<UnplacedItemPlacementFormValues>({
-    defaultValues: { xCm: '0', yCm: '0', zCm: '0', rotationDeg: '0', locked: true },
+    defaultValues: { xCm: '0', yCm: '0', zCm: '0', rotationDeg: '0', locked: false },
   });
   const onSubmit = handleSubmit((values) => onPlace(item.id, buildUnplacedItemPlacementPayload(values)));
 
@@ -520,6 +766,7 @@ function UnplacedItemPlacementCard({ item, readOnly, isSaving, onPlace }: { item
         <label className="check wide"><input type="checkbox" {...register('locked')} /> Bloquear bulto</label>
         <button type="submit" disabled={isSaving}>{isSaving ? 'Ubicando' : 'Ubicar manualmente'}</button>
       </form>}
+      {onHide ? <button type="button" className="ghost staging-hide" onClick={() => onHide(item.id)} disabled={isSaving}>Dejar fuera / ocultar de staging</button> : null}
     </div>
   );
 }
@@ -542,6 +789,74 @@ export function buildUnplacedItemPlacementPayload(values: UnplacedItemPlacementF
     rotationDeg: requiredIntegerValue(values.rotationDeg),
     locked: Boolean(values.locked),
   };
+}
+
+export function scenePositionFromDomain(item: Pick<PlacedItem, 'xMm' | 'yMm' | 'zMm' | 'lengthMm' | 'widthMm' | 'heightMm'>, dimensions: TruckDimensions, scale: number): [number, number, number] {
+  return [
+    (item.xMm + item.lengthMm / 2 - dimensions.lengthMm / 2) * scale,
+    (item.zMm + item.heightMm / 2) * scale,
+    (item.yMm + item.widthMm / 2 - dimensions.widthMm / 2) * scale,
+  ];
+}
+
+export function domainPositionFromScene(sceneX: number, sceneY: number, sceneZ: number, item: Pick<PlacedItem, 'lengthMm' | 'widthMm' | 'heightMm'>, dimensions: Pick<TruckDimensions, 'lengthMm' | 'widthMm'>, scale: number) {
+  return {
+    xMm: Math.round(sceneX / scale - item.lengthMm / 2 + dimensions.lengthMm / 2),
+    yMm: Math.round(sceneZ / scale - item.widthMm / 2 + dimensions.widthMm / 2),
+    zMm: Math.round(sceneY / scale - item.heightMm / 2),
+  };
+}
+
+const MIN_SUPPORT_OVERLAP_RATIO = 0.6;
+
+export function settleDraggedPlacement(candidate: Pick<PlacedItem, 'xMm' | 'yMm' | 'zMm'>, item: DraggedPlacement, items: DraggedPlacement[]) {
+  let supportTopMm = 0;
+  const footprint = { xMm: candidate.xMm, yMm: candidate.yMm, lengthMm: item.lengthMm, widthMm: item.widthMm };
+
+  for (const other of items) {
+    if (other.id === item.id) continue;
+    const otherTopMm = other.zMm + other.heightMm;
+    if (otherTopMm > candidate.zMm) continue;
+    if (supportOverlapRatio(footprint, other) < MIN_SUPPORT_OVERLAP_RATIO) continue;
+    supportTopMm = Math.max(supportTopMm, otherTopMm);
+  }
+
+  return { ...candidate, zMm: supportTopMm };
+}
+
+export function settleAndValidateDraggedPlacement(candidate: Pick<PlacedItem, 'xMm' | 'yMm' | 'zMm'>, item: DraggedPlacement, items: DraggedPlacement[], dimensions: TruckDimensions) {
+  const settledCandidate = settleDraggedPlacement(candidate, item, items);
+  return {
+    candidate: settledCandidate,
+    isValid: isValidDraggedPlacement(settledCandidate, item, items, dimensions),
+  };
+}
+
+export function isValidDraggedPlacement(candidate: Pick<PlacedItem, 'xMm' | 'yMm' | 'zMm'>, item: DraggedPlacement, items: DraggedPlacement[], dimensions: TruckDimensions) {
+  if (candidate.xMm < 0 || candidate.yMm < 0) return false;
+  if (candidate.xMm + item.lengthMm > dimensions.lengthMm) return false;
+  if (candidate.yMm + item.widthMm > dimensions.widthMm) return false;
+  if (candidate.zMm < 0 || candidate.zMm + item.heightMm > dimensions.heightMm) return false;
+
+  return items.every((other) => {
+    if (other.id === item.id) return true;
+    const overlapsZ = candidate.zMm < other.zMm + other.heightMm && candidate.zMm + item.heightMm > other.zMm;
+    if (!overlapsZ) return true;
+    return !rectanglesOverlap(
+      { xMm: candidate.xMm, yMm: candidate.yMm, lengthMm: item.lengthMm, widthMm: item.widthMm },
+      { xMm: other.xMm, yMm: other.yMm, lengthMm: other.lengthMm, widthMm: other.widthMm },
+    );
+  });
+}
+
+function rectanglesOverlap(a: Pick<PlacedItem, 'xMm' | 'yMm' | 'lengthMm' | 'widthMm'>, b: Pick<PlacedItem, 'xMm' | 'yMm' | 'lengthMm' | 'widthMm'>) {
+  return a.xMm < b.xMm + b.lengthMm && a.xMm + a.lengthMm > b.xMm && a.yMm < b.yMm + b.widthMm && a.yMm + a.widthMm > b.yMm;
+}
+
+function supportOverlapRatio(a: Pick<PlacedItem, 'xMm' | 'yMm' | 'lengthMm' | 'widthMm'>, b: Pick<PlacedItem, 'xMm' | 'yMm' | 'lengthMm' | 'widthMm'>) {
+  const overlapLengthMm = Math.max(0, Math.min(a.xMm + a.lengthMm, b.xMm + b.lengthMm) - Math.max(a.xMm, b.xMm));
+  const overlapWidthMm = Math.max(0, Math.min(a.yMm + a.widthMm, b.yMm + b.widthMm) - Math.max(a.yMm, b.yMm));
+  return (overlapLengthMm * overlapWidthMm) / (a.lengthMm * a.widthMm);
 }
 
 export function formatPosition(valueMm: number) {
@@ -590,7 +905,7 @@ function ItemAlertBox({ alerts }: { alerts: PlanAlert[] }) {
   return <div className={`item-alert-box ${alerts.some((alert) => alert.severity === 'CRITICAL') ? 'critical' : 'warning'}`}><strong>{headline}</strong>{alerts.map((alert) => <span key={alert.id}>{alertMessage(alert)}</span>)}</div>;
 }
 
-function truckDimensions(items: PlacedItem[], truck: Truck | null) {
+function truckDimensions(items: PlacedItem[], truck: Truck | null): TruckDimensions {
   const usedLength = Math.max(1000, ...items.map((item) => item.xMm + item.lengthMm));
   const usedWidth = Math.max(1000, ...items.map((item) => item.yMm + item.widthMm));
   const usedHeight = Math.max(1000, ...items.map((item) => item.zMm + item.heightMm));

@@ -1,7 +1,8 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { PlanAlertsPanel, PlanCandidateDiagnosticsPanel, PlanEvaluationPanel, PlanStepInstructionPreview, buildPlacedItemAdjustmentPayload, buildUnplacedItemPlacementPayload, candidateNameLabel, formatDimension, formatPosition } from './planner-ui';
+import { PlanAlertsPanel, PlanCandidateDiagnosticsPanel, PlanEvaluationPanel, PlanStepInstructionPreview, applyDraftPlacements, buildDraftPlacementAdjustments, buildPlacedItemAdjustmentPayload, buildUnplacedItemPlacementPayload, candidateNameLabel, domainPositionFromScene, formatDimension, formatPosition, isValidDraggedPlacement, scenePositionFromDomain, settleAndValidateDraggedPlacement, settleDraggedPlacement } from './planner-ui';
+import type { DraftPlacementByItemId, DraggedPlacement, TruckDimensions } from './planner-ui';
 
 describe('planner item adjustment form mapping', () => {
   it('maps centimeter adjustment values to millimeters for the API', () => {
@@ -63,6 +64,139 @@ describe('planner units', () => {
     expect(formatPosition(0)).toBe('0.00 m');
     expect(formatDimension(850)).toBe('85 cm');
     expect(formatDimension(3200)).toBe('3.20 m');
+  });
+});
+
+describe('planner 3D drag helpers', () => {
+  const dimensions: TruckDimensions = { lengthMm: 10000, widthMm: 2500, heightMm: 3000 };
+  const item = draggedItem({ id: 'item-1', xMm: 1000, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 });
+
+  it('applies multiple temporary placements at the same time', () => {
+    const items = [
+      draggedItem({ id: 'item-1', xMm: 1000, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 }),
+      draggedItem({ id: 'item-2', xMm: 2500, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 }),
+      draggedItem({ id: 'item-3', xMm: 4000, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 }),
+    ];
+    const drafts: DraftPlacementByItemId = new Map([
+      ['item-1', { itemId: 'item-1', xMm: 1200, yMm: 600, zMm: 0, savedXMm: 1000, savedYMm: 500, savedZMm: 0, isValid: true }],
+      ['item-2', { itemId: 'item-2', xMm: 2800, yMm: 700, zMm: 400, savedXMm: 2500, savedYMm: 500, savedZMm: 0, isValid: true }],
+    ]);
+
+    expect(applyDraftPlacements(items, drafts).map(({ id, xMm, yMm, zMm }) => ({ id, xMm, yMm, zMm }))).toEqual([
+      { id: 'item-1', xMm: 1200, yMm: 600, zMm: 0 },
+      { id: 'item-2', xMm: 2800, yMm: 700, zMm: 400 },
+      { id: 'item-3', xMm: 4000, yMm: 500, zMm: 0 },
+    ]);
+  });
+
+  it('builds a save payload for the selected valid temporary placement', () => {
+    const drafts: DraftPlacementByItemId = new Map([
+      ['item-1', { itemId: 'item-1', xMm: 1200, yMm: 600, zMm: 0, savedXMm: 1000, savedYMm: 500, savedZMm: 0, isValid: true }],
+      ['item-2', { itemId: 'item-2', xMm: 2800, yMm: 700, zMm: 400, savedXMm: 2500, savedYMm: 500, savedZMm: 0, isValid: true }],
+    ]);
+
+    expect(buildDraftPlacementAdjustments(drafts, [
+      { id: 'item-1', rotationDeg: 0, locked: false },
+      { id: 'item-2', rotationDeg: 90, locked: true },
+    ], 'item-2')).toEqual([
+      { itemId: 'item-2', payload: { xMm: 2800, yMm: 700, zMm: 400, rotationDeg: 90, locked: true } },
+    ]);
+  });
+
+  it('skips invalid temporary placements when saving all valid drafts', () => {
+    const drafts: DraftPlacementByItemId = new Map([
+      ['item-1', { itemId: 'item-1', xMm: 1200, yMm: 600, zMm: 0, savedXMm: 1000, savedYMm: 500, savedZMm: 0, isValid: true }],
+      ['item-2', { itemId: 'item-2', xMm: 2800, yMm: 700, zMm: 400, savedXMm: 2500, savedYMm: 500, savedZMm: 0, isValid: false }],
+    ]);
+
+    expect(buildDraftPlacementAdjustments(drafts, [
+      { id: 'item-1', rotationDeg: 0, locked: false },
+      { id: 'item-2', rotationDeg: 90, locked: true },
+    ])).toEqual([
+      { itemId: 'item-1', payload: { xMm: 1200, yMm: 600, zMm: 0, rotationDeg: 0, locked: false } },
+    ]);
+  });
+
+  it('converts between domain coordinates and scene coordinates including height', () => {
+    const scenePosition = scenePositionFromDomain(item, dimensions, 0.001);
+
+    expect(scenePosition).toEqual([-3.5, 0.2, -0.5]);
+    expect(domainPositionFromScene(scenePosition[0], scenePosition[1], scenePosition[2], item, dimensions, 0.001)).toEqual({ xMm: 1000, yMm: 500, zMm: 0 });
+  });
+
+  it('accepts a dragged position inside truck bounds without collisions', () => {
+    expect(isValidDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 0 }, item, [item], dimensions)).toBe(true);
+  });
+
+  it('rejects dragged positions outside truck bounds', () => {
+    expect(isValidDraggedPlacement({ xMm: 9501, yMm: 500, zMm: 0 }, item, [item], dimensions)).toBe(false);
+    expect(isValidDraggedPlacement({ xMm: 2500, yMm: 2201, zMm: 0 }, item, [item], dimensions)).toBe(false);
+  });
+
+  it('rejects xy collisions only when height ranges overlap', () => {
+    const otherOnSameLayer = draggedItem({ id: 'item-2', xMm: 1500, yMm: 500, zMm: 0, lengthMm: 800, widthMm: 500, heightMm: 400 });
+    const otherAbove = draggedItem({ id: 'item-3', xMm: 1500, yMm: 500, zMm: 800, lengthMm: 800, widthMm: 500, heightMm: 400 });
+
+    expect(isValidDraggedPlacement({ xMm: 1200, yMm: 500, zMm: 0 }, item, [item, otherOnSameLayer], dimensions)).toBe(false);
+    expect(isValidDraggedPlacement({ xMm: 1200, yMm: 500, zMm: 0 }, item, [item, otherAbove], dimensions)).toBe(true);
+  });
+
+  it('settles a floating candidate over empty floor to z=0', () => {
+    expect(settleDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 900 }, item, [item])).toEqual({ xMm: 2500, yMm: 500, zMm: 0 });
+  });
+
+  it('settles a floating candidate over an item to that item top when overlap is sufficient', () => {
+    const support = draggedItem({ id: 'item-2', xMm: 2500, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 });
+
+    expect(settleDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 900 }, item, [item, support])).toEqual({ xMm: 2500, yMm: 500, zMm: 400 });
+  });
+
+  it('settles on support when overlap is exactly the minimum threshold', () => {
+    const support = draggedItem({ id: 'item-2', xMm: 2500, yMm: 500, zMm: 0, lengthMm: 600, widthMm: 500, heightMm: 400 });
+
+    expect(settleDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 900 }, item, [item, support])).toEqual({ xMm: 2500, yMm: 500, zMm: 400 });
+  });
+
+  it('settles to floor when edge overlap is below the support threshold', () => {
+    const partialSupport = draggedItem({ id: 'item-2', xMm: 3400, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 });
+
+    expect(settleDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 900 }, item, [item, partialSupport])).toEqual({ xMm: 2500, yMm: 500, zMm: 0 });
+  });
+
+  it('settles to floor when candidate is not horizontally over a support', () => {
+    const support = draggedItem({ id: 'item-2', xMm: 4000, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 });
+
+    expect(settleDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 900 }, item, [item, support])).toEqual({ xMm: 2500, yMm: 500, zMm: 0 });
+  });
+
+  it('leaves collision after settle invalid so drag save can reject it', () => {
+    const supportAboveRawDrag = draggedItem({ id: 'item-2', xMm: 2500, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 });
+    const settled = settleDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 200 }, item, [item, supportAboveRawDrag]);
+
+    expect(settled).toEqual({ xMm: 2500, yMm: 500, zMm: 0 });
+    expect(isValidDraggedPlacement(settled, item, [item, supportAboveRawDrag], dimensions)).toBe(false);
+  });
+
+  it('leaves insufficient support over occupied floor invalid after settling to floor', () => {
+    const partialSupport = draggedItem({ id: 'item-2', xMm: 3400, yMm: 500, zMm: 0, lengthMm: 1000, widthMm: 500, heightMm: 400 });
+    const settled = settleDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 900 }, item, [item, partialSupport]);
+
+    expect(settled).toEqual({ xMm: 2500, yMm: 500, zMm: 0 });
+    expect(isValidDraggedPlacement(settled, item, [item, partialSupport], dimensions)).toBe(false);
+  });
+
+  it('validates the gravity-settled release position instead of the raw drag height', () => {
+    expect(settleAndValidateDraggedPlacement({ xMm: 2500, yMm: 500, zMm: 900 }, item, [item], dimensions)).toEqual({
+      candidate: { xMm: 2500, yMm: 500, zMm: 0 },
+      isValid: true,
+    });
+  });
+
+  it('returns the settled candidate even when the release position is invalid', () => {
+    expect(settleAndValidateDraggedPlacement({ xMm: 9501, yMm: 500, zMm: 900 }, item, [item], dimensions)).toEqual({
+      candidate: { xMm: 9501, yMm: 500, zMm: 0 },
+      isValid: false,
+    });
   });
 });
 
@@ -214,6 +348,10 @@ function candidate(overrides: { index: number; name: string; score: number; hard
     metrics: { placedItemCount: 2, unplacedItemCount: 0, criticalAlertCount: overrides.hardViolationCount, warningAlertCount: 0 },
     evaluation: { score: overrides.score, hardViolationCount: overrides.hardViolationCount, softPenaltyTotal: 0, penalties: [] },
   };
+}
+
+function draggedItem(overrides: DraggedPlacement): DraggedPlacement {
+  return overrides;
 }
 
 describe('planner alerts', () => {
